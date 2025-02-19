@@ -322,7 +322,7 @@ if __name__ == "__main__":
 
         
 
-        o3d.visualization.draw_geometries([pcd])
+        #o3d.visualization.draw_geometries([pcd])
         pc_full = pcd.points
         pc_full = np.asarray(pc_full)
         print(pc_full.shape)
@@ -354,8 +354,8 @@ if __name__ == "__main__":
         #visualize_grasps(pc_full, pred_grasps_cam, scores, plot_opencv_cam=True, pc_colors=None)
         for i,k in enumerate(pred_grasps_cam):
             if np.any(pred_grasps_cam[k]):
-                grasp = pred_grasps_cam[k]
-                print(grasp)
+                grasps = pred_grasps_cam[k]
+                print(grasps.shape)
                 # gripper_openings_k = np.ones(len(pred_grasps_cam[k]))*gripper_width if gripper_openings is None else gripper_openings[k]
                 # if len(pred_grasps_cam) > 1:
                 #     draw_grasps(pred_grasps_cam[k], np.eye(4), color=colors[i], gripper_openings=gripper_openings_k)    
@@ -365,11 +365,36 @@ if __name__ == "__main__":
                 #     colors3 = [cm2(0.5*score)[:3] for score in scores[k]]
                 #     draw_grasps(pred_grasps_cam[k], np.eye(4), colors=colors3, gripper_openings=gripper_openings_k)    
             
-                mesh = o3d.geometry.TriangleMesh.create_coordinate_frame()
-                mesh = mesh.translate(grasp[0:3])
-                #mesh_ty = copy.deepcopy(mesh).translate((0, 1.3, 0))
-                print(f'Center of mesh: {mesh.get_center()}')
-                o3d.visualization.draw_geometries([mesh])
+                # mesh = o3d.geometry.TriangleMesh.create_coordinate_frame()
+                # mesh = mesh.translate(grasp[0:3])
+                # #mesh_ty = copy.deepcopy(mesh).translate((0, 1.3, 0))
+                # print(f'Center of mesh: {mesh.get_center()}')
+                # o3d.visualization.draw_geometries([mesh])
+                arrows = []
+                for grasp_tf in grasps:
+                    # Define the transformation matrix R (example: a rotation matrix)
+                    R = np.array(grasp_tf)
+                    #print(R)
+                    # Define the original vector (0,0,1) in homogeneous coordinates
+                    v_homogeneous = np.array([0, 0, 0.1, 1])
+
+                    # Compute the transformed vector
+                    v_transformed_homogeneous = R @ v_homogeneous
+
+                    # Convert back to 3D (ignore the homogeneous coordinate)
+                    v_transformed = v_transformed_homogeneous[:3]
+
+                    # Create Open3D vectors for visualization
+                    origin = np.array([0, 0, 0])
+
+                    transformed_arrow = o3d.geometry.LineSet()
+                    transformed_arrow.points = o3d.utility.Vector3dVector([origin, v_transformed])
+                    transformed_arrow.lines = o3d.utility.Vector2iVector([[0, 1]])
+                    transformed_arrow.colors = o3d.utility.Vector3dVector([[0, 1, 0]])  # Green for transformed
+                    arrows.append(transformed_arrow)
+                # Visualize
+                o3d.visualization.draw_geometries([pcd]+arrows)
+
 
         sys.exit()
 
