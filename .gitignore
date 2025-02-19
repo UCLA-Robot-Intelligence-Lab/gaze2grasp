@@ -1,0 +1,17 @@
+results
+checkpoints/*
+*.npz
+**/*.pyc
+**/__pycache__
+.vscode
+gripper_models/*
+gripper_control_points/*
+pointnet2/*
+ultralytics/*
+uniform_quaternions/*
+compile_pointnet_tfops.sh
+contact_graspnet_env.yml
+FastSAM-s.pt
+fastsam/*
+archive/*
+test_data/*
