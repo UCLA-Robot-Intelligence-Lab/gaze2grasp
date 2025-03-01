@@ -1,18 +1,86 @@
-import pyrealsense2 as rs
-import numpy as np
-import cv2
 
+
+
+import pyrealsense2 as rs
+import cv2
+import math
 import os
 import sys
 import argparse
-import numpy as np
 import time
 import glob
 import open3d as o3d
 
-
+from sklearn.neighbors import NearestNeighbors
 import tensorflow.compat.v1 as tf
 tf.disable_eager_execution()
+
+import numpy as np
+
+
+GRIPPER_SPEED, GRIPPER_FORCE, GRIPPER_MAX_WIDTH, GRIPPER_TOLERANCE = 0.1, 40, 0.08570, 0.01
+serial_no = '317422075456' #(camera further from robot arm)
+#serial_no = '317422074281'
+
+transforms = np.load(f'calib/transforms_{serial_no}.npy', allow_pickle=True).item()
+TCR = transforms[serial_no]['tcr']
+
+from multicam import XarmEnv
+
+# from rs_streamer import RealsenseStreamer
+from scipy.spatial.transform import Rotation 
+from calib_utils.linalg_utils import transform
+
+robot = XarmEnv()
+
+def transform_rotation_camera_to_robot_roll_yaw_pitch(rotation_cam, TCR):
+    """
+    Transforms a rotation from camera frame to robot base frame and returns Roll-Yaw-Pitch.
+    """
+    # Convert camera rotation to quaternion
+    r_cam = Rotation.from_matrix(rotation_cam)
+    q_cam = r_cam.as_quat()
+
+    # Convert TCR rotation to quaternion
+    r_tcr = Rotation.from_matrix(TCR[:3, :3])
+    q_tcr = r_tcr.as_quat()
+
+    # Multiply quaternions
+    q_rob = Rotation.from_quat(q_tcr) * Rotation.from_quat(q_cam)
+    q_rob = q_rob.as_quat()
+
+    # Convert robot rotation to Roll-Yaw-Pitch (ZYX Euler angles)
+    r_rob = Rotation.from_quat(q_rob)
+    roll_yaw_pitch = r_rob.as_euler('zyx', degrees=True)
+
+    roll, pitch, yaw = roll_yaw_pitch[2], roll_yaw_pitch[1], roll_yaw_pitch[0]
+    '''# Normalize angles to [-180, 180]
+    roll = (roll + 180) % 360 - 180
+    pitch = (pitch + 180) % 360 - 180
+    yaw = (yaw + 180) % 360 - 180
+
+    # Constrain Pitch (-45 to +45)
+    if pitch > 45:
+        pitch -= 180
+        roll += 180
+        yaw += 180
+    elif pitch < -45:
+        pitch += 180
+        roll += 180
+        yaw += 180
+
+    # Constrain Yaw (-90 to +90)
+    if yaw > 90:
+        yaw -= 180
+    elif yaw < -90:
+        yaw += 180
+
+    # Constrain Roll (90 to 180 absolute)
+    if abs(roll) < 90:
+        roll = (roll + 180) % 360 - 180  # Flip to the equivalent angle
+
+    print("Constrained roll, pitch, yaw: ", roll, pitch, yaw)'''
+    return np.array([roll, pitch, yaw]) # Return as (roll, pitch, yaw)
 
 
 class RealsenseStreamer():
@@ -67,7 +135,10 @@ class RealsenseStreamer():
 
         depth_frame = frames.get_depth_frame()
         color_frame = frames.get_color_frame()
-
+        #plt.figure(figsize=(10,10))
+        #plt.imshow(color_frame)
+        #plt.axis('on')
+        #plt.show()  
         self.depth_intrin = depth_frame.profile.as_video_stream_profile().intrinsics
         self.color_intrin = color_frame.profile.as_video_stream_profile().intrinsics
 
@@ -161,6 +232,51 @@ class RealsenseStreamer():
         colors = colors[denoised_idxs]
         
         return points_3d, colors, color_frame, color_image, depth_frame, depth_image
+    
+    def seg_to_pc(self, segmap):
+        """
+        Convert depth and intrinsics to point cloud and optionally point cloud color
+        :param depth: hxw depth map in m
+        :param K: 3x3 Camera Matrix with intrinsics
+        :returns: (Nx3 point cloud, point cloud color)
+        """
+        align_to = rs.stream.color
+        align = rs.align(align_to)
+        
+        try:
+            frames = self.pipeline.wait_for_frames()
+            aligned_frames = align.process(frames)
+            depth_frame = aligned_frames.get_depth_frame()
+            color_frame = aligned_frames.get_color_frame()
+            color_image_grb = np.asanyarray(color_frame.get_data())
+            color_image = color_image_grb[:, :, ::-1] # Real sense uses BGR but we want RGB
+            
+            depth_image = np.asanyarray(depth_frame.get_data())
+            
+            intrinsics = depth_frame.profile.as_video_stream_profile().intrinsics
+            
+            K = np.array([[intrinsics.fx, 0, intrinsics.ppx],
+                        [0, intrinsics.fy, intrinsics.ppy],
+                        [0, 0, 1]])
+
+            mask = np.where(depth_image > 0 and segmap != 0)
+            x,y = mask[1], mask[0]
+            
+            normalized_x = (x.astype(np.float32) - K[0,2])
+            normalized_y = (y.astype(np.float32) - K[1,2])
+
+            world_x = normalized_x * depth_image[y, x] / K[0,0]
+            world_y = normalized_y * depth_image[y, x] / K[1,1]
+            world_z = depth_image[y, x]
+
+            pc_rgb = color_image[y,x,:]
+                
+            pc = np.vstack((world_x, world_y, world_z)).T
+            return pc, pc_rgb
+    
+        except Exception as e:
+            print(f"Error getting point cloud: {e}")
+            return None
 
     def stop_stream(self):
         self.pipeline.stop()
@@ -179,7 +295,7 @@ import config_utils
 from data import regularize_pc_point_count, depth2pc, load_available_input_data
 
 from contact_grasp_estimator import GraspEstimator
-from visualization_utils import visualize_grasps, show_image
+#from visualization_utils import visualize_grasps, show_image
 
 def inference(global_config, checkpoint_dir, input_paths, K=None, local_regions=True, skip_border_objects=False, filter_grasps=True, segmap_id=None, z_range=[0.2,1.8], forward_passes=1):
     """
@@ -249,14 +365,15 @@ def inference(global_config, checkpoint_dir, input_paths, K=None, local_regions=
         t1 = time.time()
         print(f'time taken to save results: {round(t1-t0, 2)} seconds')
 
-        # Visualize results          
-        show_image(rgb, segmap)
-        visualize_grasps(pc_full, pred_grasps_cam, scores, plot_opencv_cam=True, pc_colors=pc_colors)
+        # Visualize results    (uses mayavi)      
+        #show_image(rgb, segmap)
+        #visualize_grasps(pc_full, pred_grasps_cam, scores, plot_opencv_cam=True, pc_colors=pc_colors)
         
     if not glob.glob(input_paths):
         print('No files found: ', input_paths)
         
 if __name__ == "__main__":
+    
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--ckpt_dir', default='checkpoints/scene_test_2048_bs3_hor_sigma_001', help='Log dir [default: checkpoints/scene_test_2048_bs3_hor_sigma_001]')#default='checkpoints/scene_2048_bs3_rad2_32', help='Log dir [default: checkpoints/scene_2048_bs3_rad2_32]') 
@@ -274,17 +391,17 @@ if __name__ == "__main__":
 
     global_config = config_utils.load_config(FLAGS.ckpt_dir, batch_size=FLAGS.forward_passes, arg_configs=FLAGS.arg_configs)
     
-    #realsense_streamer  = RealsenseStreamer('317222072157')
-    realsense_streamer = RealsenseStreamer('317422075456') #317422074281 small
-
-    t0 = time.time()
+    
     # Build the model
     grasp_estimator = GraspEstimator(global_config)
     grasp_estimator.build_network()
 
     # Add ops to save and restore all the variables.
     saver = tf.train.Saver(save_relative_paths=True)
+    #realsense_streamer  = RealsenseStreamer('317222072157')
+    realsense_streamer = RealsenseStreamer(serial_no) #317422074281 small
 
+    t0 = time.time()
     # Create a session
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
@@ -298,31 +415,15 @@ if __name__ == "__main__":
     print(f'time taken to load model weights: {round(t1-t0, 2)} seconds')
     os.makedirs('results', exist_ok=True)
     
-
+    
+    
     frames = []
     while True:
-        points_3d, colors, _, _, _, _ = realsense_streamer.capture_rgbd()
+        points_3d, colors, _, _,  depth_frame, depth_image = realsense_streamer.capture_rgbd()
 
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(points_3d)
         pcd.colors = o3d.utility.Vector3dVector(colors)
-
-        #cv2.waitKey(1)
-        #cv2.imshow('img', rgb_image)
-        # image_o3d = o3d.geometry.Image(rgb_image)
-        # depth_o3d = o3d.geometry.Image(depth_img)
-        # rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(image_o3d, depth_o3d)
-        
-        #print(rgbd_image)
-
-        # print("converting to pcd")
-        # #open3d.cuda.pybind.camera.PinholeCameraIntrinsic(width: int, height: int, fx: float, fy: float, cx: float, cy: float)
-        # pcd = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd_image,
-        #         o3d.camera.PinholeCameraIntrinsic(realsense_streamer.width, realsense_streamer.height, realsense_streamer.depth_intrin.fx, realsense_streamer.depth_intrin.fy, realsense_streamer.depth_intrin.ppx, realsense_streamer.depth_intrin.ppy))
-
-        
-
-        #o3d.visualization.draw_geometries([pcd])
         pc_full = pcd.points
         pc_full = np.asarray(pc_full)
         print(pc_full.shape)
@@ -335,7 +436,7 @@ if __name__ == "__main__":
         #             K=FLAGS.K, local_regions=FLAGS.local_regions, filter_grasps=FLAGS.filter_grasps, segmap_id=FLAGS.segmap_id, 
         #             forward_passes=FLAGS.forward_passes, skip_border_objects=FLAGS.skip_border_objects)
 
-       
+      
 
         t0 = time.time()
         print('Generating Grasps...')
@@ -348,52 +449,111 @@ if __name__ == "__main__":
         print(f'time taken to generate grasps: {round(t1-t0, 2)} seconds')
         #print(pred_grasps_cam)
 
-       
-
-        # Visualize results        
-        #visualize_grasps(pc_full, pred_grasps_cam, scores, plot_opencv_cam=True, pc_colors=None)
-        for i,k in enumerate(pred_grasps_cam):
-            if np.any(pred_grasps_cam[k]):
-                grasps = pred_grasps_cam[k]
-                print(grasps.shape)
-                # gripper_openings_k = np.ones(len(pred_grasps_cam[k]))*gripper_width if gripper_openings is None else gripper_openings[k]
-                # if len(pred_grasps_cam) > 1:
-                #     draw_grasps(pred_grasps_cam[k], np.eye(4), color=colors[i], gripper_openings=gripper_openings_k)    
-                #     draw_grasps([pred_grasps_cam[k][np.argmax(scores[k])]], np.eye(4), color=colors2[k], 
-                #                 gripper_openings=[gripper_openings_k[np.argmax(scores[k])]], tube_radius=0.0025)    
-                # else:
-                #     colors3 = [cm2(0.5*score)[:3] for score in scores[k]]
-                #     draw_grasps(pred_grasps_cam[k], np.eye(4), colors=colors3, gripper_openings=gripper_openings_k)    
+        grasp_width = 0.008
+        gaze = np.array([300,400])
+        semantic_waypoint = realsense_streamer.deproject_pixel(gaze, depth_frame)
+        if isinstance(pred_grasps_cam, dict):
+            all_grasps = []
+            for k in pred_grasps_cam:
+                if pred_grasps_cam[k].size > 0:  # Check for empty arrays
+                    all_grasps.append(pred_grasps_cam[k])
+            if not all_grasps:
+                print("No grasps predicted. Skipping frame.")
+                continue  # Skip to the next iteration if no grasps are found
             
-                # mesh = o3d.geometry.TriangleMesh.create_coordinate_frame()
-                # mesh = mesh.translate(grasp[0:3])
-                # #mesh_ty = copy.deepcopy(mesh).translate((0, 1.3, 0))
-                # print(f'Center of mesh: {mesh.get_center()}')
-                # o3d.visualization.draw_geometries([mesh])
-                arrows = []
-                for grasp_tf in grasps:
-                    # Define the transformation matrix R (example: a rotation matrix)
-                    R = np.array(grasp_tf)
-                    #print(R)
-                    # Define the original vector (0,0,1) in homogeneous coordinates
-                    v_homogeneous = np.array([0, 0, 0.1, 1])
+            all_grasps = np.concatenate(all_grasps, axis=0)
+        else:
+            all_grasps = pred_grasps_cam #in case its not a dict.
 
-                    # Compute the transformed vector
-                    v_transformed_homogeneous = R @ v_homogeneous
+        print(f"Shape of all_grasps before processing: {all_grasps.shape}")
+        # Extract grasp centers for nearest neighbor search
+        # Extract grasp centers for nearest neighbor search
+        # Correctly handle different shapes based on how grasps are stored.
+        if all_grasps.ndim == 3 and all_grasps.shape[1:] == (4, 4):  # (N, 4, 4) - Full matrices
+            grasp_centers = all_grasps[:, :3, 3]
+        elif all_grasps.ndim == 2 and all_grasps.shape[1] >= 3: # (N, M) where M >=3, likely (N,7) or (N, >7)
+             grasp_centers = all_grasps[:, :3]  # first 3 as position
+        elif all_grasps.ndim == 1 and all_grasps.shape[0] >=3:
+            grasp_centers = all_grasps[:3] #if all_grasps gets flattened to 1 dimension
+            all_grasps = all_grasps.reshape(1,-1) #reshape it so the rest of the code works as expected.
+        else:
+            raise ValueError(f"Unexpected shape for all_grasps: {all_grasps.shape}.  Cannot extract grasp centers.")
 
-                    # Convert back to 3D (ignore the homogeneous coordinate)
-                    v_transformed = v_transformed_homogeneous[:3]
 
-                    # Create Open3D vectors for visualization
-                    origin = np.array([0, 0, 0])
+        nbrs = NearestNeighbors(n_neighbors=1).fit(grasp_centers)
+        dists, idxs = nbrs.kneighbors(np.array(semantic_waypoint).reshape(1, -1), return_distance=True)
+        best_idx = idxs[0][0]
 
-                    transformed_arrow = o3d.geometry.LineSet()
-                    transformed_arrow.points = o3d.utility.Vector3dVector([origin, v_transformed])
-                    transformed_arrow.lines = o3d.utility.Vector2iVector([[0, 1]])
-                    transformed_arrow.colors = o3d.utility.Vector3dVector([[0, 1, 0]])  # Green for transformed
-                    arrows.append(transformed_arrow)
-                # Visualize
-                o3d.visualization.draw_geometries([pcd]+arrows)
+        # --- CRITICAL: Access the correct grasp based on the original shape ---
+        if all_grasps.ndim == 3 and all_grasps.shape[1:] == (4, 4):
+            closest_grasp = all_grasps[best_idx]  # (4, 4)
+        elif all_grasps.ndim == 2 and all_grasps.shape[1] >=3:
+            closest_grasp_center = all_grasps[best_idx, :3]
+            #Reconstruct a dummy grasp matrix IF all_grasps doesn't contain full matrices.
+            # This is important for cases where your grasp representation isn't a full 4x4 matrix.
+            closest_grasp = np.eye(4)  # Identity matrix
+            closest_grasp[:3, 3] = closest_grasp_center # set position
+            # You might want to add some default orientation here if available, or a heuristic
+            # closest_grasp[:3, :3] = ...  #  Example:  Set a default orientation.
+
+        elif all_grasps.ndim == 1 and all_grasps.shape[0] >= 3:
+            closest_grasp_center = all_grasps[best_idx,:3]
+             #Reconstruct a dummy grasp matrix IF all_grasps doesn't contain full matrices.
+            closest_grasp = np.eye(4)  # Identity matrix
+            closest_grasp[:3, 3] = closest_grasp_center # set position
+
+        else:  # This should never happen due to the check above, but good for safety
+            raise ValueError("Unexpected shape after nearest neighbor search.")
+        print("CLOSEST GRASP:", closest_grasp)
+        # --- End Nearest Neighbor Calculation ---
+        arrows = []
+        R = np.array(closest_grasp[:3, :3])
+        t = np.array(closest_grasp[:3, 3])
+
+        grasp_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.05, origin=t)  # Adjust size as needed
+        grasp_frame.rotate(R, center=t) # Apply the grasp rotation
+
+
+        # Define the grasp approach vector (z-axis in local gripper frame)
+        approach_vector = np.array([0, 0, 0.1])  # Arrow length of 10cm
+
+        # Transform the approach vector to world coordinates
+        v_transformed = R @ approach_vector + t
+
+        # Define grasp width vector for visualization (left and right finger placement)
+        grasp_offset = R @ np.array([grasp_width / 2, 0, 0])  # Half of width along x-axis
+        left_finger = t - grasp_offset
+        right_finger = t + grasp_offset
+
+        # Create arrow for approach direction
+        approach_arrow = o3d.geometry.LineSet()
+        approach_arrow.points = o3d.utility.Vector3dVector([t, v_transformed])
+        approach_arrow.lines = o3d.utility.Vector2iVector([[0, 1]])
+        approach_arrow.colors = o3d.utility.Vector3dVector([[0, 1, 0]])  # Green (Approach)
+
+        # Create line for grasp width (finger placement)
+        grasp_line = o3d.geometry.LineSet()
+        grasp_line.points = o3d.utility.Vector3dVector([left_finger, right_finger])
+        grasp_line.lines = o3d.utility.Vector2iVector([[0, 1]])
+        grasp_line.colors = o3d.utility.Vector3dVector([[1, 0, 0]])  # Red (Grasp width)
+
+        arrows.append(approach_arrow)
+        arrows.append(grasp_line)
+        arrows.append(grasp_frame)
+
+        print("Closest predicted grasp: ", closest_grasp)
+        position_cam = 1000.0*np.array(closest_grasp[:3, 3])  # Extract translation
+        position_rob = np.array(transform(np.array(position_cam).reshape(1,3), TCR))[0]
+
+        # Extract rotation matrix and convert to Euler angles (roll, pitch, yaw)
+        rotation_matrix = closest_grasp[:3, :3]
+        
+        # Visualize with point cloud
+        o3d.visualization.draw_geometries([pcd] + arrows)
+        orientation = transform_rotation_camera_to_robot_roll_yaw_pitch(rotation_matrix, TCR)
+        print("Position: ", position_rob)
+        print("Orientation: ", orientation)
+        robot.move_to_ee_pose(position_rob, orientation)
 
 
         sys.exit()

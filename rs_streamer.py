@@ -198,6 +198,8 @@ if __name__ == '__main__':
         _, rgb_image, depth_frame, depth_img = realsense_streamer.capture_rgbd()
         cv2.waitKey(1)
         cv2.imshow('img', rgb_image)
+
+        
         #(u,v), vis = marker_search.find_marker(rgb_image)
         #print(u,v)
         #cv2.imshow('img', np.hstack((depth_img, vis)))

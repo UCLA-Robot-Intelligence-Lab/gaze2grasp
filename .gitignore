@@ -10,8 +10,11 @@ pointnet2/*
 ultralytics/*
 uniform_quaternions/*
 compile_pointnet_tfops.sh
-contact_graspnet_env.yml
-FastSAM-s.pt
-fastsam/*
 archive/*
-test_data/*
+contact_graspnet/segment/FastSAM*/
+contact_graspnet/calib_utils*/
+contact_graspnet/gaze_model*/
+contact_graspnet/vision_utils*/
+projectaria_tools_python_env*/
+pointnet2*/
+calib*/
