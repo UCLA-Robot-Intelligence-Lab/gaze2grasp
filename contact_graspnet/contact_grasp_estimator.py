@@ -330,6 +330,8 @@ class GraspEstimator:
             selection_idcs = np.union1d(conf_idcs_greater_than[center_indexes], remaining_idcs[remaining_conf_idcs_greater_than])
         return selection_idcs
 
+    
+
     def extract_point_clouds(self, depth, K, segmap=None, rgb=None, z_range=[0.2,1.8], segmap_id=0, skip_border_objects=False, margin_px=5):
         """
         Converts depth map + intrinsics to point cloud. 
