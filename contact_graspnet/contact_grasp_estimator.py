@@ -186,13 +186,16 @@ class GraspEstimator:
         
         with tf.device('/GPU:0'): 
             # Run model inference
+            print("Inferencing in progress...")
             pred_grasps_cam, pred_scores, pred_points, offset_pred = sess.run(self.inference_ops, feed_dict=feed_dict)
-
+        
         pred_grasps_cam = pred_grasps_cam.reshape(-1, *pred_grasps_cam.shape[-2:])
         pred_points = pred_points.reshape(-1, pred_points.shape[-1])
         pred_scores = pred_scores.reshape(-1)
         offset_pred = offset_pred.reshape(-1)
-        
+        print('pred_grasps_cam shape: ', pred_grasps_cam.shape)
+        #print('pred_points: ', pred_points)
+        print('avg_pred_scores: ', np.average(pred_scores))
         # uncenter grasps
         pred_grasps_cam[:,:3, 3] += pc_mean.reshape(-1,3)
         pred_points[:,:3] += pc_mean.reshape(-1,3)
@@ -207,10 +210,11 @@ class GraspEstimator:
         selection_idcs = self.select_grasps(pred_points[:,:3], pred_scores, 
                                             self._contact_grasp_cfg['TEST']['max_farthest_points'], 
                                             self._contact_grasp_cfg['TEST']['num_samples'], 
+                                            #0,
                                             self._contact_grasp_cfg['TEST']['first_thres'], 
                                             self._contact_grasp_cfg['TEST']['second_thres'] if 'second_thres' in self._contact_grasp_cfg['TEST'] else self._contact_grasp_cfg['TEST']['first_thres'], 
                                             with_replacement=self._contact_grasp_cfg['TEST']['with_replacement'])
-
+        print('selection_idcs: ', selection_idcs)
         if not np.any(selection_idcs):
             selection_idcs=np.array([], dtype=np.int32)
 
