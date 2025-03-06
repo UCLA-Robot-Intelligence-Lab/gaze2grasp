@@ -8,7 +8,8 @@ import os
 import aria.sdk as aria
 import time
 from segment.FastSAM.fastsam import FastSAM
-from segment.SAMInference import select_from_sam_everything
+from segment.SAMInference import select_from_sam_everything, run_fastsam_point_inference
+from grasp_selector import find_closest_grasp
 
 import tensorflow.compat.v1 as tf
 tf.disable_eager_execution()
@@ -269,6 +270,9 @@ def main():
     # 6. Visualize the streaming data until we close the window
     rgb_window = "Aria RGB"
     realsense_window = "RealSense ArUco Detection" # New window for RealSense
+    seg_window = "Gaze Segmentation (Aria)" # New window for RealSense
+    seg_cam_window = "Gaze Segmentation (Camera)" # New window for RealSense
+
 
     cv2.namedWindow(rgb_window, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(rgb_window, 1024, 1024)
@@ -278,6 +282,15 @@ def main():
     cv2.namedWindow(realsense_window, cv2.WINDOW_NORMAL) # Create RealSense window
     cv2.resizeWindow(realsense_window, 640, 480) # Resize to RealSense resolution
     cv2.moveWindow(realsense_window, 1100, 50) # Position RealSense window
+
+    cv2.namedWindow(seg_window, cv2.WINDOW_NORMAL) 
+    cv2.resizeWindow(seg_window, 640, 480) 
+    cv2.moveWindow(seg_window, 1800, 50) 
+
+    cv2.namedWindow(seg_cam_window, cv2.WINDOW_NORMAL) 
+    cv2.resizeWindow(seg_cam_window, 640, 480) 
+    cv2.moveWindow(seg_cam_window, 1800, 1050) 
+
 
     # 7. Fetch calibration and labels to be passed to 3D -> 2D gaze coordinate casting function
     rgb_stream_label = "camera-rgb"
@@ -341,7 +354,7 @@ def main():
 
                     # Run inference using gaze estimation model
                     gaze_coordinates = gaze_inference(gaze, model, rgb_stream_label, device_calibration, rgb_camera_calibration)
-
+                    rgb_image_raw = rgb_image.copy()
                     # If gaze coordinates exist, plot as a bright green dot on screen on Aria Image
                     if gaze_coordinates is not None:
                         cv2.circle(rgb_image, (int(gaze_coordinates[0]), int(gaze_coordinates[1])), 5, (0, 255, 0), 10)
@@ -356,6 +369,7 @@ def main():
 
                 else:
                     display_text(rgb_image, 'No Gaze Found', (20, 50))
+                    gaze_coordinates = None
 
                 cv2.imshow(rgb_window, rgb_image)
                 del observer.images[aria.CameraId.Rgb]
@@ -367,7 +381,7 @@ def main():
 
                 if realsense_image is not None:
                     # Display the RealSense image (e.g., in a new window) and plot on cv2 image
-                    if transformed_x is not None and transformed_y is not None:
+                    if transformed_x is not None and transformed_y is not None and gaze_coordinates is not None:
                         cv2.circle(realsense_image, (int(transformed_x), int(transformed_y)), 5, (0, 255, 0), 10)
                         cv2.putText(realsense_image, f'Transformed Gaze: ({round(transformed_x, 2)}, {round(transformed_y, 2)})', (20, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
                         
@@ -377,26 +391,84 @@ def main():
 
                             gaze_median = gaze_history.history_median()
                             if not gaze_median is None:
-                                gaze = [int(np.floor(gaze_median[0])), int(np.floor(gaze_median[1]))]                        
+                                gaze = ([int(np.floor(gaze_median[0])), int(np.floor(gaze_median[1]))]  )                      
                             else:
-                                gaze = [int(np.floor(transformed_x)), int(np.floor(transformed_y))]    
-                            print("gaze: ", gaze)
-                            segmented_img = select_from_sam_everything( #Segments everything and merge masks that is closest to the point prompt
-                                                seg_model,
-                                                gaze,
-                                                input_img=None,
-                                                imgsz=1024,
-                                                iou=0.9,
-                                                conf=0.4,
-                                                max_distance=100,
-                                                device=None,
-                                                retina=True,
-                                            )
-                            pc_full, pc_color = homography_manager.seg_to_pc(segmented_img)
+                                gaze = ([int(np.floor(transformed_x)), int(np.floor(transformed_y))]    )
+                            #print("gaze_coordinates_aria: ", gaze_coordinates)
+                            print('rgb_image shape:', (rgb_image.shape))
+                            try:
+
+                                segmented_img, mask_points = select_from_sam_everything( #Segments everything and merge masks that is closest to the point prompt
+                                                    seg_model,
+                                                    gaze_coordinates,
+                                                    input_img=rgb_image_raw,
+                                                    imgsz=1408,
+                                                    iou=0.9,
+                                                    conf=0.4,
+                                                    max_distance=50,#100,
+                                                    device=None,
+                                                    retina=True,
+                                                )
+                            
+                                print("segmented_img shape:", segmented_img.shape)
+                                print("segmented_img dtype:", segmented_img.dtype)
+                                print("segmented_img min/max:", segmented_img.min(), segmented_img.max())
+                                
+                                cv2.imshow(seg_window, segmented_img)
+                                print("mask_points: ", mask_points)
+                                time.sleep(0.5)
+                            except Exception as e:
+                                print(f"Error displaying segmented image: {e}")
+                                break
+
+                            mask_pt_cam = []
+                            for mask_point in mask_points:
+                                transformed_x, transformed_y = homography_manager.apply_homography(mask_point)
+                                if transformed_x < 0 or transformed_y < 0 or transformed_x >= 640 or transformed_y >= 480:
+                                    print("Point out of bounds")
+                                    break
+                                mask_pt_cam.append([int(np.floor(transformed_x)), int(np.floor(transformed_y))])
+                            print("mask_pt_cam: ", mask_pt_cam)
+                            try:
+                                segmented_cam_img = run_fastsam_point_inference(
+                                    seg_model,
+                                    mask_pt_cam,
+                                    input_img=realsense_image,
+                                    imgsz=640,
+                                    iou=0.9,
+                                    conf=0.4,
+                                    point_label="[1,0]",
+                                    device=None,
+                                    retina=True,
+                                )
+                                
+                                print("segmented_cam_img shape:", segmented_cam_img.shape)
+                                print("segmented_cam_img dtype:", segmented_cam_img.dtype)
+                                print("segmented_cam_img min/max:", segmented_cam_img.min(), segmented_cam_img.max())
+                                cv2.imshow(seg_cam_window, segmented_cam_img.astype(np.uint8) * 255)
+                                time.sleep(0.5)
+
+                            except Exception as e:
+                                print(f"Error displaying segmented image: {e}")
+                                break
+                            
+                            pc_full, pc_color = homography_manager.realsense_streamer.seg_to_pc(segmented_cam_img)
+
+                            # Create an Open3D point cloud object
+                            pcd = o3d.geometry.PointCloud()
+                            pcd.points = o3d.utility.Vector3dVector(pc_full)
+                            pcd.colors = o3d.utility.Vector3dVector(pc_color)
+
+                            # Visualize the point cloud
+                            o3d.visualization.draw_geometries([pcd])
+
                             grasps, _, _, _ = grasp_estimator.predict_scene_grasps(sess, pc_full, pc_segments=None, 
                                                                                           local_regions=None, filter_grasps=False, forward_passes=1)  
                             arrows = []
                             grasp_width = 0.008
+
+                            # Find the closest grasp to the gaze point using nearest neighbour
+                            #closest_grasp = find_closest_grasp(grasps, gaze, homography_manager.realsense_streamer.depth_frame, homography_manager.realsense_streamer)
 
                             #Plot only the centre grasp
                             center = pcd.get_center()
