@@ -180,6 +180,69 @@ class RealsenseStreamer():
         depth_frame = self.filter_depth(depth_frame)
         depth_image = np.asanyarray(self.colorizer.colorize(depth_frame).get_data())
         return color_frame, color_image, depth_frame, depth_image
+    
+    def seg_to_pc(self, segmap):
+        """
+        Convert depth and intrinsics to point cloud and optionally point cloud color
+        :param depth: hxw depth map in m
+        :param K: 3x3 Camera Matrix with intrinsics
+        :returns: (Nx3 point cloud, point cloud color)
+        """
+        align_to = rs.stream.color
+        align = rs.align(align_to)
+        
+        try:
+            frames = self.pipeline.wait_for_frames()
+            aligned_frames = align.process(frames)
+            depth_frame = aligned_frames.get_depth_frame()
+            color_frame = aligned_frames.get_color_frame()
+            color_image_grb = np.asanyarray(color_frame.get_data())
+            color_image = color_image_grb[:, :, ::-1] # Real sense uses BGR but we want RGB
+            
+            depth_image = np.asanyarray(depth_frame.get_data())
+            
+            intrinsics = depth_frame.profile.as_video_stream_profile().intrinsics
+            
+            K = np.array([[intrinsics.fx, 0, intrinsics.ppx],
+                        [0, intrinsics.fy, intrinsics.ppy],
+                        [0, 0, 1]])
+
+            '''mask = np.where(depth_image > 0 and segmap != 0)
+            x,y = mask[1], mask[0]
+            
+            normalized_x = (x.astype(np.float32) - K[0,2])
+            normalized_y = (y.astype(np.float32) - K[1,2])
+
+            world_x = normalized_x * depth_image[y, x] / K[0,0]
+            world_y = normalized_y * depth_image[y, x] / K[1,1]
+            world_z = depth_image[y, x]
+
+            pc_rgb = color_image[y,x,:]
+                '''
+            mask = (depth_image > 0) & (segmap != 0)
+        
+            #The mask indices need to be flipped
+            y, x = np.where(mask)
+            
+
+            # Vectorized calculations.  No need for explicit loops.
+            normalized_x = (x.astype(np.float32) - K[0, 2])
+            normalized_y = (y.astype(np.float32) - K[1, 2])
+
+            # Use the masked depth values directly.
+            depth_values = depth_image[mask]
+            world_x = normalized_x * depth_values / K[0, 0]
+            world_y = normalized_y * depth_values / K[1, 1]
+            world_z = depth_values
+
+            pc_rgb = color_image[mask]  # Extract color at valid points.
+
+            pc = np.vstack((world_x, world_y, world_z)).T
+            return pc, pc_rgb
+    
+        except Exception as e:
+            print(f"Error getting point cloud: {e}")
+            return None
 
     def stop_stream(self):
         self.pipeline.stop()
