@@ -87,7 +87,7 @@ def select_from_sam_everything_points( #Segments everything and merge masks that
     imgsz=1408,
     iou=0.9,
     conf=0.4,
-    max_distance=400,
+    max_distance=10,
     device=None,
     retina=True,
 ):
@@ -140,7 +140,7 @@ def select_from_sam_everything( #Segments everything and merge masks that is clo
     imgsz=1408,
     iou=0.9,
     conf=0.4,
-    max_distance=400,
+    max_distance=10,
     device=None,
     retina=True,
 ):
@@ -161,7 +161,7 @@ def select_from_sam_everything( #Segments everything and merge masks that is clo
     ann = prompt_process.everything_prompt()
     ann = ann.cpu().numpy()
     #print('Input image should be 1408x1408: ', input_img.shape)
-    print('ann image should be 1408x1408: ', ann.shape)
+    print('ann shape: ', ann.shape)
     
     image_size = input_img.shape[0] * input_img.shape[1]
     #print("image_size: ", image_size)
@@ -175,9 +175,10 @@ def select_from_sam_everything( #Segments everything and merge masks that is clo
                 for y, x in mask_indices:
                     #print(point_prompt, [x,y])
                     #print('max dist: ', distance.euclidean(point_prompt, [x, y]))
-                    if distance.euclidean(point_prompt, [x, y]) <= max_distance:
-                        within_radius = True
-                        break
+                    for point in point_prompt:
+                        if distance.euclidean(point, [x, y]) <= max_distance:
+                            within_radius = True
+                            break
                 if within_radius:
                     mask_size = np.count_nonzero(mask)
                     if mask_size <= 0.2* image_size:  # Check if mask is not larger than 20%
@@ -185,12 +186,12 @@ def select_from_sam_everything( #Segments everything and merge masks that is clo
                         center_y, center_x = np.mean(mask_indices, axis=0)
                         filtered_centers.append([center_x, center_y]) 
                         #print("appended mask")
-    combined_mask = np.zeros((input_img.shape[1], input_img.shape[0]), dtype=np.uint8)
+    combined_mask = np.zeros((input_img.shape[0], input_img.shape[1]), dtype=np.uint8)
     print('filtered masks: ', len(filtered_masks))
     if filtered_masks:
         for mask in filtered_masks:
             combined_mask = np.logical_or(combined_mask, mask)
-        return combined_mask.astype(np.uint8) * 255, filtered_centers
+        return combined_mask, filtered_centers
     else: #added else statement, important!
         print("ERROR! NO MASKS FOUND")
-        return None
+        return combined_mask, filtered_centers

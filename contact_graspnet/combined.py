@@ -14,8 +14,6 @@ from grasp_selector import find_closest_grasp
 import tensorflow.compat.v1 as tf
 tf.disable_eager_execution()
 
-from contact_grasp_estimator import GraspEstimator
-
 from common import quit_keypress, update_iptables
 from gaze_model.inference import infer
 from projectaria_tools.core.mps import EyeGaze
@@ -28,11 +26,15 @@ from homography import HomographyManager # Import HomographyManager
 from gaze_history import GazeHistory
 
 from multicam import XarmEnv
-from calib.rotation_transform import transform_rotation_camera_to_robot_roll_yaw_pitch
+from calib_utils.rotation_transform import transform_rotation_camera_to_robot_roll_yaw_pitch
 from calib_utils.linalg_utils import transform
-import config_utils
+
 
 import open3d as o3d
+
+physical_devices = tf.config.experimental.list_physical_devices('GPU')
+print(f'GPUs: {physical_devices}')
+tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
 
 GRIPPER_SPEED, GRIPPER_FORCE, GRIPPER_MAX_WIDTH, GRIPPER_TOLERANCE = 0.1, 40, 0.08570, 0.01
@@ -46,7 +48,10 @@ robot = XarmEnv()
 
 seg_model = FastSAM('./contact_graspnet/segment/FastSAM-s.pt')
 
-
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.join(BASE_DIR))
+import config_utils
+from contact_grasp_estimator import GraspEstimator
 
 def gaze_inference(data: np.ndarray, inference_model, rgb_stream_label, device_calibration, rgb_camera_calibration):
     depth_m = 1  # 1 m
@@ -378,6 +383,7 @@ def main():
                 realsense_image, transformed_x, transformed_y = homography_manager.process_frame(
                     ariaCorners, ariaIds, gaze_coordinates
                 )
+                realsense_image_raw = realsense_image.copy()
 
                 if realsense_image is not None:
                     # Display the RealSense image (e.g., in a new window) and plot on cv2 image
@@ -387,6 +393,9 @@ def main():
                         
                         # gaze history returns true if user has been staring at the same (x, y) coordinate point for x amount of frames
                         if gaze_history.log((transformed_x, transformed_y)):
+                            if gaze_history.report_stare_coordinates()[0] < 0 or gaze_history.report_stare_coordinates()[1] < 0 or gaze_history.report_stare_coordinates()[0] >= 640 or gaze_history.report_stare_coordinates()[1] >= 480:
+                                print("Gaze is out of bounds")
+                                break
                             print(f'USER IS STARING AT {gaze_history.report_stare_coordinates()}')
 
                             gaze_median = gaze_history.history_median()
@@ -400,12 +409,12 @@ def main():
 
                                 segmented_img, mask_points = select_from_sam_everything( #Segments everything and merge masks that is closest to the point prompt
                                                     seg_model,
-                                                    gaze_coordinates,
+                                                    [gaze_coordinates],
                                                     input_img=rgb_image_raw,
                                                     imgsz=1408,
                                                     iou=0.9,
                                                     conf=0.4,
-                                                    max_distance=50,#100,
+                                                    max_distance=10,#100,
                                                     device=None,
                                                     retina=True,
                                                 )
@@ -414,45 +423,57 @@ def main():
                                 print("segmented_img dtype:", segmented_img.dtype)
                                 print("segmented_img min/max:", segmented_img.min(), segmented_img.max())
                                 
-                                cv2.imshow(seg_window, segmented_img)
+                                cv2.imshow(seg_window, segmented_img.astype(np.uint8) * 255)
                                 print("mask_points: ", mask_points)
-                                time.sleep(0.5)
                             except Exception as e:
                                 print(f"Error displaying segmented image: {e}")
-                                break
+                                continue
 
                             mask_pt_cam = []
                             for mask_point in mask_points:
                                 transformed_x, transformed_y = homography_manager.apply_homography(mask_point)
-                                if transformed_x < 0 or transformed_y < 0 or transformed_x >= 640 or transformed_y >= 480:
-                                    print("Point out of bounds")
-                                    break
                                 mask_pt_cam.append([int(np.floor(transformed_x)), int(np.floor(transformed_y))])
                             print("mask_pt_cam: ", mask_pt_cam)
                             try:
-                                segmented_cam_img = run_fastsam_point_inference(
-                                    seg_model,
-                                    mask_pt_cam,
-                                    input_img=realsense_image,
-                                    imgsz=640,
-                                    iou=0.9,
-                                    conf=0.4,
-                                    point_label="[1,0]",
-                                    device=None,
-                                    retina=True,
-                                )
+                                segmented_cam_img, _ = select_from_sam_everything( #Segments everything and merge masks that is closest to the point prompt
+                                                    seg_model,
+                                                    mask_pt_cam,
+                                                    input_img=realsense_image_raw,
+                                                    imgsz=640,
+                                                    iou=0.9,
+                                                    conf=0.4,
+                                                    max_distance=75,#100,
+                                                    device=None,
+                                                    retina=True,
+                                                )
                                 
                                 print("segmented_cam_img shape:", segmented_cam_img.shape)
                                 print("segmented_cam_img dtype:", segmented_cam_img.dtype)
                                 print("segmented_cam_img min/max:", segmented_cam_img.min(), segmented_cam_img.max())
+                                '''for mask_point in mask_pt_cam:
+                                    transformed_x, transformed_y = mask_point
+                                    cv2.circle(segmented_cam_img, (int(transformed_x), int(transformed_y)), 5, 255, 10)
+'''
                                 cv2.imshow(seg_cam_window, segmented_cam_img.astype(np.uint8) * 255)
-                                time.sleep(0.5)
+                                #cv2.waitKey(0)
 
                             except Exception as e:
                                 print(f"Error displaying segmented image: {e}")
-                                break
+                                continue
+                            
                             
                             pc_full, pc_color = homography_manager.realsense_streamer.seg_to_pc(segmented_cam_img)
+                            '''if pc_full == None or pc_color == None:
+                                raise ValueError(f"The point cloud is empty.")
+                            else:
+                            print("Point cloud shape: ", pc_full.shape)
+                            print("Point cloud color shape: ", pc_color.shape)
+                            print("Min/Max of pc_full (X): ", np.min(pc_full[:, 0]), np.max(pc_full[:, 0]))
+                            print("Min/Max of pc_full (Y): ", np.min(pc_full[:, 1]), np.max(pc_full[:, 1]))
+                            print("Min/Max of pc_full (Z): ", np.min(pc_full[:, 2]), np.max(pc_full[:, 2]))
+                            print("Min/Max of pc_color (R): ", np.min(pc_color[:, 0]), np.max(pc_color[:, 0]))
+                            print("Min/Max of pc_color (G): ", np.min(pc_color[:, 1]), np.max(pc_color[:, 1]))
+                            print("Min/Max of pc_color (B): ", np.min(pc_color[:, 2]), np.max(pc_color[:, 2]))'''
 
                             # Create an Open3D point cloud object
                             pcd = o3d.geometry.PointCloud()
@@ -462,77 +483,83 @@ def main():
                             # Visualize the point cloud
                             o3d.visualization.draw_geometries([pcd])
 
-                            grasps, _, _, _ = grasp_estimator.predict_scene_grasps(sess, pc_full, pc_segments=None, 
+                            #print(str(global_config))
+                            #print('pid: %s'%(str(os.getpid())))
+                            pred_grasps_cam, _, _, _ = grasp_estimator.predict_scene_grasps(sess, pc_full, pc_segments=None, 
                                                                                           local_regions=None, filter_grasps=False, forward_passes=1)  
-                            arrows = []
-                            grasp_width = 0.008
-
-                            # Find the closest grasp to the gaze point using nearest neighbour
-                            #closest_grasp = find_closest_grasp(grasps, gaze, homography_manager.realsense_streamer.depth_frame, homography_manager.realsense_streamer)
-
-                            #Plot only the centre grasp
-                            center = pcd.get_center()
-
-                            # Calculate distances from grasp translations to the center
-                            distances = [np.linalg.norm(grasp[:3, 3] - center) for grasp in grasps]
-
-                            # Find the index of the closest grasp
-                            closest_grasp_index = np.argmin(distances)
-                            closest_grasp = grasps[closest_grasp_index]
-                            arrows = []
-
-                            # Extract rotation matrix (3x3) and translation (position)
-                            #R = np.identity(3)
-                            R = np.array(closest_grasp[:3, :3])
-                            t = np.array(closest_grasp[:3, 3])
-
-                            grasp_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.05, origin=t)  # Adjust size as needed
-                            grasp_frame.rotate(R, center=t) # Apply the grasp rotation
-
-
-                            # Define the grasp approach vector (z-axis in local gripper frame)
-                            approach_vector = np.array([0, 0, 0.1])  # Arrow length of 10cm
-
-                            # Transform the approach vector to world coordinates
-                            v_transformed = R @ approach_vector + t
-
-                            # Define grasp width vector for visualization (left and right finger placement)
-                            grasp_offset = R @ np.array([grasp_width / 2, 0, 0])  # Half of width along x-axis
-                            left_finger = t - grasp_offset
-                            right_finger = t + grasp_offset
-
-                            # Create arrow for approach direction
-                            approach_arrow = o3d.geometry.LineSet()
-                            approach_arrow.points = o3d.utility.Vector3dVector([t, v_transformed])
-                            approach_arrow.lines = o3d.utility.Vector2iVector([[0, 1]])
-                            approach_arrow.colors = o3d.utility.Vector3dVector([[0, 1, 0]])  # Green (Approach)
-
-                            # Create line for grasp width (finger placement)
-                            grasp_line = o3d.geometry.LineSet()
-                            grasp_line.points = o3d.utility.Vector3dVector([left_finger, right_finger])
-                            grasp_line.lines = o3d.utility.Vector2iVector([[0, 1]])
-                            grasp_line.colors = o3d.utility.Vector3dVector([[1, 0, 0]])  # Red (Grasp width)
-
-                            arrows.append(approach_arrow)
-                            arrows.append(grasp_line)
-                            arrows.append(grasp_frame)
-                            pcd = o3d.geometry.PointCloud()
-                            pcd.points = o3d.utility.Vector3dVector(pc_full)
-                            pcd.colors = o3d.utility.Vector3dVector(pc_color)
-
-                            print("Closest predicted grasp: ", closest_grasp)
-                            position_cam = 1000.0*np.array(closest_grasp[:3, 3])  # Extract translation
-                            position_rob = np.array(transform(np.array(position_cam).reshape(1,3), TCR))[0]
-
-                            # Extract rotation matrix and convert to Euler angles (roll, pitch, yaw)
-                            rotation_matrix = closest_grasp[:3, :3]
                             
-                            # Visualize with point cloud
-                            o3d.visualization.draw_geometries([pcd] + arrows)
-                            orientation = transform_rotation_camera_to_robot_roll_yaw_pitch(rotation_matrix, TCR)
-                            print("Position: ", position_rob)
-                            print("Orientation: ", orientation)
-                            robot.move_to_ee_pose(position_rob, orientation)
+
+                            for i,k in enumerate(pred_grasps_cam):
+                                if np.any(pred_grasps_cam[k]):
+                                    grasps = pred_grasps_cam[k]
+                                    print(grasps.shape)
+
+                                    arrows = []
+                                    grasp_width = 0.008
+
+                                    # Find the closest grasp to the gaze point using nearest neighbour
+                                    #closest_grasp = find_closest_grasp(grasps, gaze, homography_manager.realsense_streamer.depth_frame, homography_manager.realsense_streamer)
+
+                                    #Plot only the centre grasp
+                                    center = pcd.get_center()
+
+                                    # Calculate distances from grasp translations to the center
+                                    distances = [np.linalg.norm(grasp[:3, 3] - center) for grasp in grasps]
+
+                                    # Find the index of the closest grasp
+                                    closest_grasp_index = np.argmin(distances)
+                                    closest_grasp = grasps[closest_grasp_index]
+                                    arrows = []
+
+                                    # Extract rotation matrix (3x3) and translation (position)
+                                    #R = np.identity(3)
+                                    R = np.array(closest_grasp[:3, :3])
+                                    t = np.array(closest_grasp[:3, 3])
+
+                                    grasp_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.05, origin=t)  # Adjust size as needed
+                                    grasp_frame.rotate(R, center=t) # Apply the grasp rotation
+
+
+                                    # Define the grasp approach vector (z-axis in local gripper frame)
+                                    approach_vector = np.array([0, 0, 0.1])  # Arrow length of 10cm
+
+                                    # Transform the approach vector to world coordinates
+                                    v_transformed = R @ approach_vector + t
+
+                                    # Define grasp width vector for visualization (left and right finger placement)
+                                    grasp_offset = R @ np.array([grasp_width / 2, 0, 0])  # Half of width along x-axis
+                                    left_finger = t - grasp_offset
+                                    right_finger = t + grasp_offset
+
+                                    # Create arrow for approach direction
+                                    approach_arrow = o3d.geometry.LineSet()
+                                    approach_arrow.points = o3d.utility.Vector3dVector([t, v_transformed])
+                                    approach_arrow.lines = o3d.utility.Vector2iVector([[0, 1]])
+                                    approach_arrow.colors = o3d.utility.Vector3dVector([[0, 1, 0]])  # Green (Approach)
+
+                                    # Create line for grasp width (finger placement)
+                                    grasp_line = o3d.geometry.LineSet()
+                                    grasp_line.points = o3d.utility.Vector3dVector([left_finger, right_finger])
+                                    grasp_line.lines = o3d.utility.Vector2iVector([[0, 1]])
+                                    grasp_line.colors = o3d.utility.Vector3dVector([[1, 0, 0]])  # Red (Grasp width)
+
+                                    arrows.append(approach_arrow)
+                                    arrows.append(grasp_line)
+                                    arrows.append(grasp_frame)
+
+                                    print("Closest predicted grasp: ", closest_grasp)
+                                    position_cam = 1000.0*np.array(closest_grasp[:3, 3])  # Extract translation
+                                    position_rob = np.array(transform(np.array(position_cam).reshape(1,3), TCR))[0]
+
+                                    # Extract rotation matrix and convert to Euler angles (roll, pitch, yaw)
+                                    rotation_matrix = closest_grasp[:3, :3]
+                                    
+                                    # Visualize with point cloud
+                                    o3d.visualization.draw_geometries([pcd] + arrows)
+                                    orientation = transform_rotation_camera_to_robot_roll_yaw_pitch(rotation_matrix, TCR)
+                                    print("Position: ", position_rob)
+                                    print("Orientation: ", orientation)
+                                    robot.move_to_ee_pose(position_rob, orientation)
 
         
 

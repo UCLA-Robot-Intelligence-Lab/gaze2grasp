@@ -3,6 +3,7 @@ import numpy as np
 import cv2
 from cv2 import aruco
 import imageio
+from segment.SAMInference import FastSAMPrompt
 
 class MarkSearch:
 
@@ -197,7 +198,7 @@ class RealsenseStreamer():
             depth_frame = aligned_frames.get_depth_frame()
             color_frame = aligned_frames.get_color_frame()
             color_image_grb = np.asanyarray(color_frame.get_data())
-            color_image = color_image_grb[:, :, ::-1] # Real sense uses BGR but we want RGB
+            color_image = color_image_grb[:, :, ::-1]  # Real sense uses BGR but we want RGB
             
             depth_image = np.asanyarray(depth_frame.get_data())
             
@@ -206,43 +207,44 @@ class RealsenseStreamer():
             K = np.array([[intrinsics.fx, 0, intrinsics.ppx],
                         [0, intrinsics.fy, intrinsics.ppy],
                         [0, 0, 1]])
-
-            '''mask = np.where(depth_image > 0 and segmap != 0)
-            x,y = mask[1], mask[0]
             
-            normalized_x = (x.astype(np.float32) - K[0,2])
-            normalized_y = (y.astype(np.float32) - K[1,2])
-
-            world_x = normalized_x * depth_image[y, x] / K[0,0]
-            world_y = normalized_y * depth_image[y, x] / K[1,1]
-            world_z = depth_image[y, x]
-
-            pc_rgb = color_image[y,x,:]
-                '''
+            print('depth shape: ', depth_image.shape)
+            
+            # Create a mask where depth is valid and segmap is non-zero
             mask = (depth_image > 0) & (segmap != 0)
-        
-            #The mask indices need to be flipped
+            
+            if not np.any(mask):  # Efficiently check if the mask is all False
+                print("No valid points after masking (depth and segmentation).")
+                return None, None
+            
+            # Get the indices where the mask is True
             y, x = np.where(mask)
             
-
-            # Vectorized calculations.  No need for explicit loops.
-            normalized_x = (x.astype(np.float32) - K[0, 2])
-            normalized_y = (y.astype(np.float32) - K[1, 2])
-
-            # Use the masked depth values directly.
-            depth_values = depth_image[mask]
-            world_x = normalized_x * depth_values / K[0, 0]
-            world_y = normalized_y * depth_values / K[1, 1]
-            world_z = depth_values
-
-            pc_rgb = color_image[mask]  # Extract color at valid points.
-
+            # Normalize the pixel coordinates
+            normalized_x = (x.astype(np.float32) - K[0, 2]) / K[0, 0]
+            normalized_y = (y.astype(np.float32) - K[1, 2]) / K[1, 1]
+            
+            # Get the depth values at the valid indices
+            z = depth_image[y, x]
+            
+            # Calculate the world coordinates
+            world_x = normalized_x * z
+            world_y = normalized_y * z
+            world_z = z
+            
+            # Get the RGB values at the valid indices
+            pc_rgb = color_image[y, x, :]
+            if np.max(pc_rgb) > 1.0:
+                pc_rgb = pc_rgb / 255.0  # Normalize to [0, 1]  
+            
+            # Stack the world coordinates to form the point cloud
             pc = np.vstack((world_x, world_y, world_z)).T
+            
             return pc, pc_rgb
-    
+        
         except Exception as e:
             print(f"Error getting point cloud: {e}")
-            return None
+            return None, None
 
     def stop_stream(self):
         self.pipeline.stop()
