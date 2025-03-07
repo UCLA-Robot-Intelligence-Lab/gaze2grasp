@@ -353,6 +353,7 @@ def inference(global_config, checkpoint_dir, input_paths, K=None, local_regions=
 
         t0 = time.time()
         print('Generating Grasps...')
+        
         pred_grasps_cam, scores, contact_pts, _ = grasp_estimator.predict_scene_grasps(sess, pc_full, pc_segments=pc_segments, 
                                                                                           local_regions=local_regions, filter_grasps=filter_grasps, forward_passes=forward_passes)  
         t1 = time.time()
@@ -442,6 +443,7 @@ if __name__ == "__main__":
         print('Generating Grasps...')
         #pred_grasps_cam, scores, contact_pts, _ = grasp_estimator.predict_scene_grasps(sess, pc_full, pc_segments=pc_segments, 
         #                                                                                  local_regions=local_regions, filter_grasps=filter_grasps, forward_passes=forward_passes)  
+        
         pred_grasps_cam, scores, contact_pts, _ = grasp_estimator.predict_scene_grasps(sess, pc_full, pc_segments=None, 
                                                                                           local_regions=None, filter_grasps=False, forward_passes=1)  
         

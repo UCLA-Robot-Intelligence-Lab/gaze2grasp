@@ -393,11 +393,11 @@ def main():
                         
                         # gaze history returns true if user has been staring at the same (x, y) coordinate point for x amount of frames
                         if gaze_history.log((transformed_x, transformed_y)):
+                            print(f'USER IS STARING AT {gaze_history.report_stare_coordinates()}')
                             if gaze_history.report_stare_coordinates()[0] < 0 or gaze_history.report_stare_coordinates()[1] < 0 or gaze_history.report_stare_coordinates()[0] >= 640 or gaze_history.report_stare_coordinates()[1] >= 480:
                                 print("Gaze is out of bounds")
-                                break
-                            print(f'USER IS STARING AT {gaze_history.report_stare_coordinates()}')
-
+                                continue
+                            
                             gaze_median = gaze_history.history_median()
                             if not gaze_median is None:
                                 gaze = ([int(np.floor(gaze_median[0])), int(np.floor(gaze_median[1]))]  )                      
@@ -424,6 +424,7 @@ def main():
                                 print("segmented_img min/max:", segmented_img.min(), segmented_img.max())
                                 
                                 cv2.imshow(seg_window, segmented_img.astype(np.uint8) * 255)
+                                cv2.waitKey(0)
                                 print("mask_points: ", mask_points)
                             except Exception as e:
                                 print(f"Error displaying segmented image: {e}")
@@ -445,6 +446,7 @@ def main():
                                                     max_distance=75,#100,
                                                     device=None,
                                                     retina=True,
+                                                    #include_largest_mask = True
                                                 )
                                 
                                 print("segmented_cam_img shape:", segmented_cam_img.shape)
@@ -455,14 +457,21 @@ def main():
                                     cv2.circle(segmented_cam_img, (int(transformed_x), int(transformed_y)), 5, 255, 10)
 '''
                                 cv2.imshow(seg_cam_window, segmented_cam_img.astype(np.uint8) * 255)
-                                #cv2.waitKey(0)
+                                cv2.waitKey(0)
 
                             except Exception as e:
                                 print(f"Error displaying segmented image: {e}")
                                 continue
                             
                             
-                            pc_full, pc_color = homography_manager.realsense_streamer.seg_to_pc(segmented_cam_img)
+                            pc_full, pc_color, depth_frame = homography_manager.realsense_streamer.seg_to_pc(segmented_cam_img)
+
+                            print("Point cloud shape: ", pc_full.shape)
+                            print(np.max(pc_full[:, 0]), np.min(pc_full[:, 0]))
+                            print(np.max(pc_full[:, 1]), np.min(pc_full[:, 1])) 
+                            print(np.max(pc_full[:, 2]), np.min(pc_full[:, 2]))
+
+                            #pc_full, pc_color = homography_manager.realsense_streamer.seg_to_pc(np.ones_like(segmented_cam_img))
                             '''if pc_full == None or pc_color == None:
                                 raise ValueError(f"The point cloud is empty.")
                             else:
@@ -474,6 +483,8 @@ def main():
                             print("Min/Max of pc_color (R): ", np.min(pc_color[:, 0]), np.max(pc_color[:, 0]))
                             print("Min/Max of pc_color (G): ", np.min(pc_color[:, 1]), np.max(pc_color[:, 1]))
                             print("Min/Max of pc_color (B): ", np.min(pc_color[:, 2]), np.max(pc_color[:, 2]))'''
+                            #data = np.load('/home/u-ril/contact_graspnet/3dpoint_data.npz')
+                            #pc_full = np.array(data['xyz']).reshape(-1,3)
 
                             # Create an Open3D point cloud object
                             pcd = o3d.geometry.PointCloud()
@@ -485,6 +496,8 @@ def main():
 
                             #print(str(global_config))
                             #print('pid: %s'%(str(os.getpid())))
+
+
                             pred_grasps_cam, _, _, _ = grasp_estimator.predict_scene_grasps(sess, pc_full, pc_segments=None, 
                                                                                           local_regions=None, filter_grasps=False, forward_passes=1)  
                             
@@ -498,8 +511,8 @@ def main():
                                     grasp_width = 0.008
 
                                     # Find the closest grasp to the gaze point using nearest neighbour
-                                    #closest_grasp = find_closest_grasp(grasps, gaze, homography_manager.realsense_streamer.depth_frame, homography_manager.realsense_streamer)
-
+                                    closest_grasp = find_closest_grasp(grasps, gaze, depth_frame, homography_manager.realsense_streamer)
+                                    '''
                                     #Plot only the centre grasp
                                     center = pcd.get_center()
 
@@ -508,11 +521,10 @@ def main():
 
                                     # Find the index of the closest grasp
                                     closest_grasp_index = np.argmin(distances)
-                                    closest_grasp = grasps[closest_grasp_index]
-                                    arrows = []
+                                    closest_grasp = grasps[closest_grasp_index]'''
+                                    
 
                                     # Extract rotation matrix (3x3) and translation (position)
-                                    #R = np.identity(3)
                                     R = np.array(closest_grasp[:3, :3])
                                     t = np.array(closest_grasp[:3, 3])
 
@@ -546,20 +558,30 @@ def main():
                                     arrows.append(approach_arrow)
                                     arrows.append(grasp_line)
                                     arrows.append(grasp_frame)
+                                    o3d.visualization.draw_geometries([pcd] + arrows)
 
-                                    print("Closest predicted grasp: ", closest_grasp)
                                     position_cam = 1000.0*np.array(closest_grasp[:3, 3])  # Extract translation
                                     position_rob = np.array(transform(np.array(position_cam).reshape(1,3), TCR))[0]
 
                                     # Extract rotation matrix and convert to Euler angles (roll, pitch, yaw)
                                     rotation_matrix = closest_grasp[:3, :3]
-                                    
-                                    # Visualize with point cloud
-                                    o3d.visualization.draw_geometries([pcd] + arrows)
                                     orientation = transform_rotation_camera_to_robot_roll_yaw_pitch(rotation_matrix, TCR)
                                     print("Position: ", position_rob)
                                     print("Orientation: ", orientation)
-                                    robot.move_to_ee_pose(position_rob, orientation)
+                                    x, y, z = position_rob
+
+                                    # Define the valid range
+                                    x_range = [60, 550]
+                                    y_range = [-550, 550]
+                                    z_range = [180, 600]
+
+                                    # Check if the target position is within the valid range
+                                    if (x_range[0] <= x <= x_range[1] and
+                                        y_range[0] <= y <= y_range[1] and
+                                        z_range[0] <= z <= z_range[1]):
+                                        robot.move_to_ee_pose(position_rob, orientation)
+                                    else:
+                                        print("Target position is out of range")
 
         
 

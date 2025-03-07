@@ -2,8 +2,6 @@ import pyrealsense2 as rs
 import numpy as np
 import cv2
 from cv2 import aruco
-import imageio
-from segment.SAMInference import FastSAMPrompt
 
 class MarkSearch:
 
@@ -237,14 +235,16 @@ class RealsenseStreamer():
             if np.max(pc_rgb) > 1.0:
                 pc_rgb = pc_rgb / 255.0  # Normalize to [0, 1]  
             
+            
             # Stack the world coordinates to form the point cloud
             pc = np.vstack((world_x, world_y, world_z)).T
-            
-            return pc, pc_rgb
+            if np.max(pc) > 1.0:
+                pc = pc / 255.0
+            return pc, pc_rgb, depth_frame
         
         except Exception as e:
             print(f"Error getting point cloud: {e}")
-            return None, None
+            return None, None, depth_frame
 
     def stop_stream(self):
         self.pipeline.stop()

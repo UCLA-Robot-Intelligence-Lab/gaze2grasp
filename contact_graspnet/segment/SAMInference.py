@@ -133,7 +133,7 @@ def select_from_sam_everything_points( #Segments everything and merge masks that
     return filtered_centers
 
 
-def select_from_sam_everything( #Segments everything and merge masks that is closest to the point prompt
+def select_from_sam_everything(
     model,
     point_prompt,
     input_img=None,
@@ -143,6 +143,7 @@ def select_from_sam_everything( #Segments everything and merge masks that is clo
     max_distance=10,
     device=None,
     retina=True,
+    include_largest_mask=False
 ):
     print("Running SAM everything")
     # Run inference
@@ -160,38 +161,54 @@ def select_from_sam_everything( #Segments everything and merge masks that is clo
     
     ann = prompt_process.everything_prompt()
     ann = ann.cpu().numpy()
-    #print('Input image should be 1408x1408: ', input_img.shape)
     print('ann shape: ', ann.shape)
     
     image_size = input_img.shape[0] * input_img.shape[1]
-    #print("image_size: ", image_size)
     filtered_masks = []
     filtered_centers = []
+    
     if ann is not None:
+        # Find the largest mask if include_largest_mask is True
+        if include_largest_mask:
+            largest_mask = None
+            largest_mask_size = 0
+            for mask in ann:
+                mask_size = np.count_nonzero(mask)
+                if mask_size > largest_mask_size:
+                    largest_mask_size = mask_size
+                    largest_mask = mask
+            if largest_mask is not None:
+                filtered_masks.append(largest_mask)
+                mask_indices = np.argwhere(largest_mask)
+                center_y, center_x = np.mean(mask_indices, axis=0)
+                filtered_centers.append([center_x, center_y])
+                print("Included largest mask")
+        
+        # Filter masks based on point prompt
         for mask in ann:
             mask_indices = np.argwhere(mask)
             if len(mask_indices) > 0:
                 within_radius = False
                 for y, x in mask_indices:
-                    #print(point_prompt, [x,y])
-                    #print('max dist: ', distance.euclidean(point_prompt, [x, y]))
                     for point in point_prompt:
                         if distance.euclidean(point, [x, y]) <= max_distance:
                             within_radius = True
                             break
                 if within_radius:
                     mask_size = np.count_nonzero(mask)
-                    if mask_size <= 0.2* image_size:  # Check if mask is not larger than 20%
+                    if mask_size <= 0.2 * image_size:  # Check if mask is not larger than 20%
                         filtered_masks.append(mask)
                         center_y, center_x = np.mean(mask_indices, axis=0)
-                        filtered_centers.append([center_x, center_y]) 
-                        #print("appended mask")
+                        filtered_centers.append([center_x, center_y])
+                        print("Appended mask")
+    
+    # Combine masks
     combined_mask = np.zeros((input_img.shape[0], input_img.shape[1]), dtype=np.uint8)
-    print('filtered masks: ', len(filtered_masks))
+    print('Filtered masks: ', len(filtered_masks))
     if filtered_masks:
         for mask in filtered_masks:
             combined_mask = np.logical_or(combined_mask, mask)
         return combined_mask, filtered_centers
-    else: #added else statement, important!
+    else:
         print("ERROR! NO MASKS FOUND")
         return combined_mask, filtered_centers

@@ -196,6 +196,7 @@ class GraspEstimator:
         print('pred_grasps_cam shape: ', pred_grasps_cam.shape)
         #print('pred_points: ', pred_points)
         print('avg_pred_scores: ', np.average(pred_scores))
+        print('max_pred_scores: ', np.max(pred_scores))
         # uncenter grasps
         pred_grasps_cam[:,:3, 3] += pc_mean.reshape(-1,3)
         pred_points[:,:3] += pc_mean.reshape(-1,3)
@@ -210,8 +211,8 @@ class GraspEstimator:
         selection_idcs = self.select_grasps(pred_points[:,:3], pred_scores, 
                                             self._contact_grasp_cfg['TEST']['max_farthest_points'], 
                                             self._contact_grasp_cfg['TEST']['num_samples'], 
-                                            #0,
                                             self._contact_grasp_cfg['TEST']['first_thres'], 
+                                            #0.01,
                                             self._contact_grasp_cfg['TEST']['second_thres'] if 'second_thres' in self._contact_grasp_cfg['TEST'] else self._contact_grasp_cfg['TEST']['first_thres'], 
                                             with_replacement=self._contact_grasp_cfg['TEST']['with_replacement'])
         print('selection_idcs: ', selection_idcs)
