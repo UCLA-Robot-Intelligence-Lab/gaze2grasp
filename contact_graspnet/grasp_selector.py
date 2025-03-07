@@ -15,7 +15,7 @@ def find_closest_grasp(pred_grasps_cam, gaze, depth_frame, realsense_streamer):
         closest_grasp: 4x4 matrix representing the closest grasp pose.
     """
 
-    semantic_waypoint = realsense_streamer.deproject_pixel(gaze, depth_frame)
+    semantic_waypoint = realsense_streamer.deproject(gaze, depth_frame)
 
     if isinstance(pred_grasps_cam, dict):
         all_grasps = []
