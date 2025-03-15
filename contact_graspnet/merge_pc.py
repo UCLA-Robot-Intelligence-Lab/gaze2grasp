@@ -375,8 +375,8 @@ if __name__ == "__main__":
         pc_full1 = pcd1.points
         pc_full1 = np.asarray(pc_full1)
         print(pc_full1.shape)
-        o3d.io.write_point_cloud(f'{serial_no}.pcd', pcd)
-        o3d.io.write_point_cloud(f'{serial_no1}.pcd', pcd1)
+        o3d.io.write_point_cloud(f'./calib/{serial_no}.pcd', pcd)
+        o3d.io.write_point_cloud(f'./calib/{serial_no1}.pcd', pcd1)
 
         print(str(global_config))
         print('pid: %s'%(str(os.getpid())))

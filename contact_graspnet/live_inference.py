@@ -14,6 +14,8 @@ tf.disable_eager_execution()
 
 import numpy as np
 
+from segment.FastSAM.fastsam import FastSAM
+from segment.SAMInference import select_from_sam_everything
 
 GRIPPER_SPEED, GRIPPER_FORCE, GRIPPER_MAX_WIDTH, GRIPPER_TOLERANCE = 0.1, 40, 0.08570, 0.01
 serial_no = '317422075456' #(camera further from robot arm)
@@ -29,6 +31,35 @@ from scipy.spatial.transform import Rotation
 from calib_utils.linalg_utils import transform
 
 robot = XarmEnv()
+
+gripper_control_points = np.array([
+    [0, 0, -0.2],  # Base point
+    [0, 0, 0],      # Mid point
+    [0, 0.05, 0.1], # Finger 1 tip
+    [0, -0.05, 0.1],# Finger 2 tip
+    [0, 0.05, 0],   # Finger 1 mid
+    [0, -0.05, 0]   # Finger 2 mid
+])
+
+# Define the grasp line plot
+mid_point = gripper_control_points[1]
+grasp_line_plot = np.array([
+    gripper_control_points[0],  # Base to mid
+    mid_point,                  # Mid point
+    gripper_control_points[2],  # Finger 1 tip
+    gripper_control_points[3],  # Finger 2 tip
+    gripper_control_points[4],  # Finger 1 mid
+    gripper_control_points[5]   # Finger 2 mid
+])
+
+# Define connections for the gripper
+connections = [np.array([
+    [0, 1],  # Base to mid
+    [1, 4],  # Mid to finger 1 mid
+    [4, 2],  # Finger 1 mid to finger 1 tip
+    [1, 5],  # Mid to finger 2 mid
+    [5, 3]   # Finger 2 mid to finger 2 tip
+])]
 
 def transform_rotation_camera_to_robot_roll_yaw_pitch(rotation_cam, TCR):
     """
@@ -234,13 +265,13 @@ class RealsenseStreamer():
         depth_frame = self.filter_depth(depth_frame)
         depth_image = np.asanyarray(depth_frame.get_data()) # self.colorizer.colorize() 
 
-        denoised_idxs = self.denoise(depth_image)
+        #denoised_idxs = self.denoise(depth_image)
 
         points_3d = self.deproject(depth_image, self.K)
         colors = cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB).reshape(points_3d.shape)/255.
 
-        points_3d = points_3d[denoised_idxs]
-        colors = colors[denoised_idxs]
+        #points_3d = points_3d[denoised_idxs]
+        #colors = colors[denoised_idxs]
         
         return points_3d, colors, color_frame, color_image, depth_frame, depth_image
     
@@ -351,12 +382,16 @@ if __name__ == "__main__":
     print(f'time taken to load model weights: {round(t1-t0, 2)} seconds')
     os.makedirs('results', exist_ok=True)
     
+    seg_cam_window = "Gaze Segmentation (Camera)" # New window for RealSense
     
+    cv2.namedWindow(seg_cam_window, cv2.WINDOW_NORMAL) 
+    cv2.resizeWindow(seg_cam_window, 640, 480) 
+    cv2.moveWindow(seg_cam_window, 1800, 1050)
     
     frames = []
     while True:
-        points_3d, colors, _, _,  depth_frame, depth_image = realsense_streamer.capture_rgbd()
-
+        points_3d, colors, _, realsense_img,  depth_frame, depth_image = realsense_streamer.capture_rgbd()
+        
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(points_3d)
         pcd.colors = o3d.utility.Vector3dVector(colors)
@@ -372,68 +407,44 @@ if __name__ == "__main__":
         print('Generating Grasps...')
         #pred_grasps_cam, scores, contact_pts, _ = grasp_estimator.predict_scene_grasps(sess, pc_full, pc_segments=pc_segments, 
         #                                                                                  local_regions=local_regions, filter_grasps=filter_grasps, forward_passes=forward_passes)  
-        
-        pred_grasps_cam, scores, contact_pts, _ = grasp_estimator.predict_scene_grasps(sess, pc_full, pc_segments=None, 
-                                                                                          local_regions=None, filter_grasps=False, forward_passes=1)  
         gaze = np.array([315, 274])
+        print(realsense_img.shape)
+        seg_model = FastSAM('./contact_graspnet/segment/FastSAM-s.pt')
+        segmented_cam_img, _ = select_from_sam_everything( #Segments everything and merge masks that is closest to the point prompt
+                            seg_model,
+                            [gaze],
+                            input_img=realsense_img,
+                            imgsz=640,
+                            iou=0.9,
+                            conf=0.4,
+                            max_distance=10,#100,
+                            device=None,
+                            retina=True,
+                            #include_largest_mask = True
+                        )
+        
+        print("segmented_cam_img shape:", segmented_cam_img.shape)
+        print("segmented_cam_img dtype:", segmented_cam_img.dtype)
+        print("segmented_cam_img min/max:", segmented_cam_img.min(), segmented_cam_img.max())
+        '''for mask_point in mask_pt_cam:
+            transformed_x, transformed_y = mask_point
+            cv2.circle(segmented_cam_img, (int(transformed_x), int(transformed_y)), 5, 255, 10)
+'''
+        cv2.imshow(seg_cam_window, segmented_cam_img.astype(np.uint8) * 255)
+        cv2.waitKey(0)
+        print('depth shape: ', depth_image.shape)
+
+        #pred_grasps_cam, scores, contact_pts, _ = grasp_estimator.predict_scene_grasps(sess, pc_full, pc_segments=None, 
+          #                                                                                local_regions=None, filter_grasps=None, forward_passes=1)  
+        pred_grasps_cam, scores, contact_pts, _ = grasp_estimator.predict_scene_grasps_from_depth_K_and_2d_seg(sess, depth_image, segmented_cam_img, 
+                                                                                                               realsense_streamer.K, local_regions=True,
+                                                                                                                 filter_grasps=True)
+        
         t1 = time.time()
         print(f'time taken to generate grasps: {round(t1-t0, 2)} seconds')
         #print(pred_grasps_cam)
-        '''
-        #for plotting all grasps
-        arrows=[]
-        for i,k in enumerate(pred_grasps_cam):
-            if np.any(pred_grasps_cam[k]):
-                grasps = pred_grasps_cam[k]
-                print(grasps.shape)
-                for grasp_tf in grasps:
-                    # Extract rotation matrix (3x3) and translation (position)
-                    R = np.array(grasp_tf[:3, :3])  # Extract rotation
-                    t = np.array(grasp_tf[:3, 3])   # Extract translation (position)
-
-                    # Define the grasp approach vector (z-axis in local gripper frame)
-                    approach_vector = np.array([0, 0, 0.1])  # Arrow length of 10cm
-
-                    # Transform the approach vector to world coordinates
-                    v_transformed = R @ approach_vector + t  # Apply rotation and translation
-
-                    # Define grasp width vector for visualization (left and right finger placement)
-                    grasp_offset = R @ np.array([0.08 / 2, 0, 0])  # Half of width along x-axis
-                    left_finger = t - grasp_offset
-                    right_finger = t + grasp_offset
-
-                    # Create arrow for approach direction
-                    approach_arrow = o3d.geometry.LineSet()
-                    approach_arrow.points = o3d.utility.Vector3dVector([t, v_transformed])
-                    approach_arrow.lines = o3d.utility.Vector2iVector([[0, 1]])
-                    approach_arrow.colors = o3d.utility.Vector3dVector([[0, 1, 0]])  # Green (Approach)
-
-                    # Create line for grasp width (finger placement)
-                    grasp_line = o3d.geometry.LineSet()
-                    grasp_line.points = o3d.utility.Vector3dVector([left_finger, right_finger])
-                    grasp_line.lines = o3d.utility.Vector2iVector([[0, 1]])
-                    grasp_line.colors = o3d.utility.Vector3dVector([[1, 0, 0]])  # Red (Grasp width)
-
-                    arrows.append(approach_arrow)
-                    arrows.append(grasp_line)
-        
-        semantic_waypoint = realsense_streamer.deproject_pixel(gaze, depth_frame)
-
-        # Create a sphere mesh
-        sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)  # Adjust radius as needed
-        sphere.translate(semantic_waypoint)  # Translate to the semantic waypoint
-
-        # Paint the sphere blue
-        sphere.paint_uniform_color([0, 0, 1])  # Blue color (RGB)
-
-        # Create a coordinate frame to help visualize the sphere's position.
-        coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.05, origin=np.array([0., 0., 0.]))
-
-        o3d.visualization.draw_geometries([pcd, coordinate_frame] + arrows + [sphere])
-        #o3d.visualization.draw_geometries([pcd] + arrows + semantic_waypoint)
-        '''
-        
         extrinsic_matrix = np.load(f"./calib/extrinsic_{serial_no}.npy")
+        extrinsic_matrix1 = np.load(f"./calib/extrinsic_{serial_no}_1.npy")
         grasp_width = 0.008
         
         grippers = []
@@ -443,14 +454,138 @@ if __name__ == "__main__":
         vis.create_window()
         vis.add_geometry(pcd)
 
-        distinct_grasps = find_distinct_grasps(pred_grasps_cam, gaze, depth_frame, realsense_streamer, n_grasps=3, max_distance=0.2)
-        base_link_color = [[1, 0.5, 1], [0.5, 1, 1], [1, 1, 0.5]]
-        for i, grasp in enumerate(distinct_grasps):
-            gripper = visualize_gripper(grasp, base_link_color[i])
-            gripper_pink = visualize_gripper(grasp, [1, 0.5, 1])
-            grippers.append(gripper)
-            grippers_pink.append(gripper_pink)
+        #for plotting all grasps
+        for i, k in enumerate(pred_grasps_cam):
+            if np.any(pred_grasps_cam[k]):
+                grasps = pred_grasps_cam[k]
+                print(grasps.shape)
+                for grasp in grasps:
+                    gripper_control_points_closed = grasp_line_plot.copy()
+                    gripper_control_points_closed[2:6:2, 1] = np.sign(grasp_line_plot[2:6:2, 1]) * 0.08 / 2  # Change y-axis to simulate opening
 
+                    # Extract rotation and translation from grasp matrix
+                    R = np.array(grasp[:3, :3])  # Rotation matrix
+                    t = np.array(grasp[:3, 3])   # Translation vector
+
+                    # Apply rotation and translation to gripper points
+                    pts = np.matmul(gripper_control_points_closed, R.T)  # Apply rotation
+                    pts += t  # Apply translation
+
+                    # Flatten all_pts into a single array
+                    all_pts_array = np.vstack([pts])
+
+                    # Create Open3D LineSet
+                    line_set = o3d.geometry.LineSet(
+                        points=o3d.utility.Vector3dVector(all_pts_array),  # Pass the flattened array
+                        lines=o3d.utility.Vector2iVector(connections[0])   # Pass the connections
+                    )
+
+                    # Set color for the gripper
+                    line_set.paint_uniform_color([0, 0, 0])  # Black color
+
+                    # Add LineSet to the visualizer
+                    vis.add_geometry(line_set)
+
+        # Add semantic waypoint (blue sphere)
+        semantic_waypoint = realsense_streamer.deproject_pixel(gaze, depth_frame)
+        sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)  # Adjust radius as needed
+        sphere.translate(semantic_waypoint)  # Translate to the semantic waypoint
+        sphere.paint_uniform_color([0, 0, 1])  # Blue color (RGB)
+        vis.add_geometry(sphere)
+        vis.run()
+
+        # Print message
+        print("Getting image of all predicted grasps with gaze point")
+
+        # Set the view using the loaded extrinsic matrix
+        view_control = vis.get_view_control()
+        param = view_control.convert_to_pinhole_camera_parameters()
+        param.extrinsic = extrinsic_matrix
+        view_control.convert_from_pinhole_camera_parameters(param)
+
+        # Update visualizer
+        vis.update_renderer()
+        vis.poll_events()
+        time.sleep(1)
+
+        # Capture screen and save as image
+        float_buffer = vis.capture_screen_float_buffer()
+        float_array = np.asarray(float_buffer)
+        image_array = (255.0 * float_array).astype(np.uint8)
+        cv2.imwrite("grasps_with_gaze.png", cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR))
+
+
+        print("Specifying grasp options")
+
+        distinct_grasps = find_distinct_grasps(pred_grasps_cam, gaze, depth_frame, realsense_streamer, n_grasps=3, max_distance=0.2)
+        closest_grasps = find_closest_grasp(pred_grasps_cam, gaze, depth_frame, realsense_streamer)
+        grasps = distinct_grasps
+        grasps.append(closest_grasps)
+        base_link_color = [[1, 0.5, 1], [0.5, 1, 1], [1, 1, 0.5], [0.5, 0.5, 1]]
+        for i, grasp in enumerate(grasps):
+            gripper = visualize_gripper(grasp, base_link_color[i])
+          # gripper_pink = visualize_gripper(grasp, [1, 0.5, 1])
+            grippers.append(gripper)
+          # grippers_pink.append(gripper_pink)
+            ##############################################
+            # Simulate gripper opening by adjusting y-axis values
+            gripper_control_points_closed = grasp_line_plot.copy()
+            gripper_control_points_closed[2:6:2, 1] = np.sign(grasp_line_plot[2:6:2, 1]) * 0.08 / 2  # Change y-axis to simulate opening
+
+            # Extract rotation and translation from grasp matrix
+            R = np.array(grasp[:3, :3])  # Rotation matrix
+            t = np.array(grasp[:3, 3])   # Translation vector
+
+            # Apply rotation and translation to gripper points
+            pts = np.matmul(gripper_control_points_closed, R.T)  # Apply rotation
+            pts += t  # Apply translation
+
+            # Flatten all_pts into a single array
+            all_pts_array = np.vstack([pts])
+
+            # Create Open3D LineSet
+            line_set = o3d.geometry.LineSet(
+                points=o3d.utility.Vector3dVector(all_pts_array),  # Pass the flattened array
+                lines=o3d.utility.Vector2iVector(connections[0])   # Pass the connections
+            )
+
+            # Set color for the gripper
+            line_set.paint_uniform_color(base_link_color[i])  # Red color
+
+            vis.clear_geometries()
+            vis.add_geometry(pcd)
+            vis.add_geometry(line_set)
+
+            print("Getting image of gripper line set")
+
+            # Set the view using the loaded extrinsic matrix
+            view_control = vis.get_view_control()
+            param = view_control.convert_to_pinhole_camera_parameters()
+            param.extrinsic = extrinsic_matrix
+            view_control.convert_from_pinhole_camera_parameters(param)
+
+            vis.update_renderer()
+            vis.poll_events()
+            time.sleep(1)
+            float_buffer = vis.capture_screen_float_buffer()
+            float_array = np.asarray(float_buffer)
+            image_array = (255.0 * float_array).astype(np.uint8)
+            cv2.imwrite(f"grasp_lines_set{i}.png", cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR))
+
+            # Second camera view
+            view_control = vis.get_view_control()
+            param = view_control.convert_to_pinhole_camera_parameters()
+            param.extrinsic = extrinsic_matrix1
+            view_control.convert_from_pinhole_camera_parameters(param)
+
+            vis.update_renderer()
+            vis.poll_events()
+            time.sleep(1)
+            float_buffer = vis.capture_screen_float_buffer()
+            float_array = np.asarray(float_buffer)
+            image_array = (255.0 * float_array).astype(np.uint8)
+            cv2.imwrite(f"grasp_lines_set{i}_1.png", cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR))
+            ##############################################
             print("Getting image of coloured gripper")
             vis.clear_geometries()
             vis.add_geometry(pcd)
@@ -468,7 +603,7 @@ if __name__ == "__main__":
             up = -R[:, 2]  # Negative z-axis of gripper (vertical down)
 
             extrinsic_matrix = get_extrinsic_matrix(camera_position, lookat, front, up)
-            print('Calculated extrinsic matrix:', extrinsic_matrix)'''
+            print('Calculated extrinsic matrix:', extrinsic_matrix)
 
             new_extrinsic_matrix = np.eye(4)
             new_extrinsic_matrix[:3, :3] = grasp[:3, :3]
@@ -487,10 +622,15 @@ if __name__ == "__main__":
             param = view_control.convert_to_pinhole_camera_parameters()
             param.extrinsic = new_extrinsic_matrix
             view_control.convert_from_pinhole_camera_parameters(param)
+            '''
+            view_control = vis.get_view_control()
+            param = view_control.convert_to_pinhole_camera_parameters()
+            param.extrinsic = extrinsic_matrix
+            view_control.convert_from_pinhole_camera_parameters(param)
 
             vis.update_renderer()
             vis.poll_events()
-
+            '''
             vis.run()
             view_control = vis.get_view_control()
 
@@ -501,14 +641,27 @@ if __name__ == "__main__":
             print("Wanted Camera Parameters:")
             print("  Extrinsic:")
             print(pinhole_camera_parameters.extrinsic)
-
+            '''
             time.sleep(1)
             float_buffer = vis.capture_screen_float_buffer()
             float_array = np.asarray(float_buffer)
             image_array = (255.0 * float_array).astype(np.uint8)
             cv2.imwrite(f"gripper{i}.png", cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR))
+            # Second camera view
+            view_control = vis.get_view_control()
+            param = view_control.convert_to_pinhole_camera_parameters()
+            param.extrinsic = extrinsic_matrix1
+            view_control.convert_from_pinhole_camera_parameters(param)
+
+            vis.update_renderer()
+            vis.poll_events()
+            time.sleep(1)
+            float_buffer = vis.capture_screen_float_buffer()
+            float_array = np.asarray(float_buffer)
+            image_array = (255.0 * float_array).astype(np.uint8)
+            cv2.imwrite(f"gripper{i}_1.png", cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR))
             ##############################################
-            vis.clear_geometries()
+            '''vis.clear_geometries()
             vis.add_geometry(pcd)
             for part in gripper_pink:
                 vis.add_geometry(part)
@@ -528,16 +681,34 @@ if __name__ == "__main__":
             float_array = np.asarray(float_buffer)
             image_array = (255.0 * float_array).astype(np.uint8)
             cv2.imwrite(f"gripper_pink{i}.png", cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR))
+
+            # Second camera view
+            view_control = vis.get_view_control()
+            param = view_control.convert_to_pinhole_camera_parameters()
+            param.extrinsic = extrinsic_matrix1
+            view_control.convert_from_pinhole_camera_parameters(param)
+
+            vis.update_renderer()
+            vis.poll_events()
+            time.sleep(1)
+            float_buffer = vis.capture_screen_float_buffer()
+            float_array = np.asarray(float_buffer)
+            image_array = (255.0 * float_array).astype(np.uint8)
+            cv2.imwrite(f"gripper_pink{i}_1.png", cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR))'''
             ##############################################
             R = np.array(grasp[:3, :3])  # Extract rotation
             t = np.array(grasp[:3, 3])   # Extract translation (position)
-            grasp_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.05, origin=t)  # Adjust size as needed
+            grasp_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.09, origin=t)  # Adjust size as needed
             grasp_frame.rotate(R, center=t) # Apply the grasp rotation
+            sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
+            sphere.translate(t)
+            sphere.paint_uniform_color(base_link_color[i])
 
             # Add to the visualizer
             vis.clear_geometries()
             vis.add_geometry(pcd)
             vis.add_geometry(grasp_frame)
+            vis.add_geometry(sphere)
 
             print("Getting image of gripper axis")
 
@@ -554,6 +725,21 @@ if __name__ == "__main__":
             float_array = np.asarray(float_buffer)
             image_array = (255.0 * float_array).astype(np.uint8)
             cv2.imwrite(f"grasp_lines{i}.png", cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR))
+
+            # Second camera view
+            view_control = vis.get_view_control()
+            param = view_control.convert_to_pinhole_camera_parameters()
+            param.extrinsic = extrinsic_matrix1
+            view_control.convert_from_pinhole_camera_parameters(param)
+
+            vis.update_renderer()
+            vis.poll_events()
+            time.sleep(1)
+            float_buffer = vis.capture_screen_float_buffer()
+            float_array = np.asarray(float_buffer)
+            image_array = (255.0 * float_array).astype(np.uint8)
+            cv2.imwrite(f"grasp_lines{i}_1.png", cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR))
+            
             ##############################################
             print("Moving to pose")
             position_cam = 1000.0*np.array(grasp[:3, 3])  # Extract translation
@@ -566,6 +752,7 @@ if __name__ == "__main__":
 
         #vis.clear_geometries()
         print("Getting image of all the coloured grippers")
+        vis.clear_geometries()
         vis.add_geometry(pcd)
         for gripper in grippers:
             for part in gripper:
@@ -584,8 +771,22 @@ if __name__ == "__main__":
         float_array = np.asarray(float_buffer)
         image_array = (255.0 * float_array).astype(np.uint8)
         cv2.imwrite(f"all_gripper.png", cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR))
+        # second camera view
+        view_control = vis.get_view_control()
+        param = view_control.convert_to_pinhole_camera_parameters()
+        param.extrinsic = extrinsic_matrix1
+        view_control.convert_from_pinhole_camera_parameters(param)
+
+        vis.update_renderer()
+        vis.poll_events()
+        time.sleep(1)
+        float_buffer = vis.capture_screen_float_buffer()
+        float_array = np.asarray(float_buffer)
+        image_array = (255.0 * float_array).astype(np.uint8)
+        cv2.imwrite(f"all_gripper_1.png", cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR))
         ##############################################
-        print("Getting image of all pink grippers")
+        '''print("Getting image of all pink grippers")
+        vis.clear_geometries()
         vis.add_geometry(pcd)
         for gripper in grippers_pink:
             for part in gripper:
@@ -604,19 +805,34 @@ if __name__ == "__main__":
         float_array = np.asarray(float_buffer)
         image_array = (255.0 * float_array).astype(np.uint8)
         cv2.imwrite(f"all_gripper_pink.png", cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR))
-        
+        #second camera view
+        view_control = vis.get_view_control()
+        param = view_control.convert_to_pinhole_camera_parameters()
+        param.extrinsic = extrinsic_matrix1
+        view_control.convert_from_pinhole_camera_parameters(param)
+
+        vis.update_renderer()
+        vis.poll_events()
+        time.sleep(1)
+        float_buffer = vis.capture_screen_float_buffer()
+        float_array = np.asarray(float_buffer)
+        image_array = (255.0 * float_array).astype(np.uint8)
+        cv2.imwrite(f"all_gripper_pink_1.png", cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR))'''
         ##############################################
         print("Getting image of all gripper axes")
         vis.clear_geometries()
         vis.add_geometry(pcd)
-        for i, grasp in enumerate(distinct_grasps):
+        for i, grasp in enumerate(grasps):
             R = np.array(grasp[:3, :3])  # Extract rotation
             t = np.array(grasp[:3, 3])   # Extract translation (position)
             grasp_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.05, origin=t)  # Adjust size as needed
             grasp_frame.rotate(R, center=t) # Apply the grasp rotation
-
-            # Add to the visualizer
+            sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
+            sphere.translate(t)
+            sphere.paint_uniform_color(base_link_color[i])
             vis.add_geometry(grasp_frame)
+            vis.add_geometry(sphere)
+           #vis.add_geometry(label)
 
         # Set the view using the loaded extrinsic matrix
         view_control = vis.get_view_control()
@@ -631,7 +847,78 @@ if __name__ == "__main__":
         float_array = np.asarray(float_buffer)
         image_array = (255.0 * float_array).astype(np.uint8)
         cv2.imwrite(f"all_grasp_lines.png", cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR))
+        #second camera view
+        view_control = vis.get_view_control()
+        param = view_control.convert_to_pinhole_camera_parameters()
+        param.extrinsic = extrinsic_matrix1
+        view_control.convert_from_pinhole_camera_parameters(param)
+
+        vis.update_renderer()
+        vis.poll_events()
+        time.sleep(1)
+        float_buffer = vis.capture_screen_float_buffer()
+        float_array = np.asarray(float_buffer)
+        image_array = (255.0 * float_array).astype(np.uint8)
+        cv2.imwrite(f"all_grasp_lines_1.png", cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR))
+        ##############################################
+        print("Getting image of all gripper_line_sets")
+        vis.clear_geometries()
+        vis.add_geometry(pcd)
+        for i, grasp in enumerate(grasps):
+            gripper_control_points_closed = grasp_line_plot.copy()
+            gripper_control_points_closed[2:6:2, 1] = np.sign(grasp_line_plot[2:6:2, 1]) * 0.08 / 2  # Change y-axis to simulate opening
+
+            # Extract rotation and translation from grasp matrix
+            R = np.array(grasp[:3, :3])  # Rotation matrix
+            t = np.array(grasp[:3, 3])   # Translation vector
+
+            # Apply rotation and translation to gripper points
+            pts = np.matmul(gripper_control_points_closed, R.T)  # Apply rotation
+            pts += t  # Apply translation
+
+            # Flatten all_pts into a single array
+            all_pts_array = np.vstack([pts])
+
+            # Create Open3D LineSet
+            line_set = o3d.geometry.LineSet(
+                points=o3d.utility.Vector3dVector(all_pts_array),  # Pass the flattened array
+                lines=o3d.utility.Vector2iVector(connections[0])   # Pass the connections
+            )
+
+            # Set color for the gripper
+            line_set.paint_uniform_color(base_link_color[i]) 
+            # Add to the visualizer
+            vis.add_geometry(line_set)
+
+        # Set the view using the loaded extrinsic matrix
+        view_control = vis.get_view_control()
+        param = view_control.convert_to_pinhole_camera_parameters()
+        param.extrinsic = extrinsic_matrix
+        view_control.convert_from_pinhole_camera_parameters(param)
+
+        vis.update_renderer()
+        vis.poll_events()
+        time.sleep(1)
+        float_buffer = vis.capture_screen_float_buffer()
+        float_array = np.asarray(float_buffer)
+        image_array = (255.0 * float_array).astype(np.uint8)
+        cv2.imwrite(f"all_grasp_lines_sets.png", cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR))
+        #second camera view
+        view_control = vis.get_view_control()
+        param = view_control.convert_to_pinhole_camera_parameters()
+        param.extrinsic = extrinsic_matrix1
+        view_control.convert_from_pinhole_camera_parameters(param)
+
+        vis.update_renderer()
+        vis.poll_events()
+        time.sleep(1)
+        float_buffer = vis.capture_screen_float_buffer()
+        float_array = np.asarray(float_buffer)
+        image_array = (255.0 * float_array).astype(np.uint8)
+        cv2.imwrite(f"all_grasp_lines_sets_1.png", cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR))
         vis.destroy_window()
+        ##############################################
+        
 
         sys.exit()
 
