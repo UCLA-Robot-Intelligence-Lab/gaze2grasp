@@ -160,7 +160,11 @@ def select_from_sam_everything(
     prompt_process = FastSAMPrompt(input_img, results, device=device)
     
     ann = prompt_process.everything_prompt()
-    ann = ann.cpu().numpy()
+    try:
+        ann = ann.cpu().numpy()
+    except:
+        print(ann)
+        pass
     print('ann shape: ', ann.shape)
     
     image_size = input_img.shape[0] * input_img.shape[1]

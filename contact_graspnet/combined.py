@@ -40,6 +40,7 @@ tf.config.experimental.set_memory_growth(physical_devices[0], True)
 GRIPPER_SPEED, GRIPPER_FORCE, GRIPPER_MAX_WIDTH, GRIPPER_TOLERANCE = 0.1, 40, 0.08570, 0.01
 
 serial_no = '317422075456'
+#serial_no = '317422074281'
 
 transforms = np.load(f'calib/transforms_{serial_no}.npy', allow_pickle=True).item()
 TCR = transforms[serial_no]['tcr']
@@ -490,6 +491,7 @@ def main():
                             pcd = o3d.geometry.PointCloud()
                             pcd.points = o3d.utility.Vector3dVector(pc_full)
                             pcd.colors = o3d.utility.Vector3dVector(pc_color)
+                            o3d.io.write_point_cloud(f'./calib/segmented{serial_no}.pcd', pcd)
 
                             # Visualize the point cloud
                             o3d.visualization.draw_geometries([pcd])
