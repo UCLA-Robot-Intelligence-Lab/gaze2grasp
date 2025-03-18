@@ -22,7 +22,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '/home/u-ril/URIL/xArm-P
 from xarm import XArmAPI
 
 from dataclasses import dataclass
-from vision_utils.pc_utils import deproject, deproject_pixels, project, transform_points, draw_registration_result, rescale_pcd, align_pcds, merge_pcls, denoise
+#from vision_utils.pc_utils import deproject, deproject_pixels, project, transform_points, draw_registration_result, rescale_pcd, align_pcds, merge_pcls, denoise
 #from vision_utils.pc_utils import *
 
 GRIPPER_SPEED, GRIPPER_FORCE, GRIPPER_MAX_WIDTH, GRIPPER_TOLERANCE = 0.1, 40, 0.08570, 0.01
@@ -175,14 +175,14 @@ class MultiCam:
         fingertip_pos = np.array([ee_pos[0], ee_pos[1], ee_pos[2]]) + fingertip_offset
         return fingertip_pos
 
-    def project_fingertip_pos(self, fingertip_pos):
-        waypoints_proj = {cam.serial_no:None for cam in self.cameras}
-        for cam in self.cameras:
-            tcr = self.transforms[cam.serial_no]['tcr']
-            tf = np.linalg.inv(np.vstack((tcr, np.array([0,0,0,1]))))[:3]
-            pixel = project(fingertip_pos, cam.K, tf)
-            waypoints_proj[cam.serial_no] = pixel
-        return waypoints_proj
+    #def project_fingertip_pos(self, fingertip_pos):
+    #    waypoints_proj = {cam.serial_no:None for cam in self.cameras}
+    #    for cam in self.cameras:
+    #        tcr = self.transforms[cam.serial_no]['tcr']
+    #        tf = np.linalg.inv(np.vstack((tcr, np.array([0,0,0,1]))))[:3]
+    #        pixel = project(fingertip_pos, cam.K, tf)
+    #        waypoints_proj[cam.serial_no] = pixel
+    #    return waypoints_proj
     
 
     def crop(self, pcd, min_bound=[0.2,-0.35,0.10], max_bound=[0.9, 0.3, 0.5]): # what primitives were trained on
@@ -200,7 +200,7 @@ class MultiCam:
             rgb_images[cam.serial_no] = rgb_image
         return rgb_images
 
-    def take_rgbd(self, visualize=True):
+    '''def take_rgbd(self, visualize=True):
         rgb_images = {cam.serial_no:None for cam in self.cameras}
         depth_images = {cam.serial_no:None for cam in self.cameras}
 
@@ -217,7 +217,7 @@ class MultiCam:
             rgb_images[cam.serial_no] = rgb_image
 
             depth_img = np.asanyarray(depth_frame.get_data())
-            denoised_idxs = denoise(depth_img)
+            #denoised_idxs = denoise(depth_img)
 
             depth_images[cam.serial_no] = depth_img
 
@@ -244,7 +244,7 @@ class MultiCam:
         pcd_merged = merge_pcls(merged_points, merged_colors, tfs=icp_tfs, cam_ids=cam_ids, visualize=visualize)
         return rgb_images, depth_images, pcd_merged
 
-
+'''
 
     def calibrate_cam(self, robot=None):
         if not os.path.exists('calib'):

@@ -255,7 +255,9 @@ class RealsenseStreamer():
 
 if __name__ == '__main__':
     #realsense_streamer  = RealsenseStreamer('317222072157')
-    realsense_streamer = RealsenseStreamer('317422075456') #317422074281 small
+    #realsense_streamer = RealsenseStreamer('317422075456') #317422074281 small
+    realsense_streamer = RealsenseStreamer('317422074281') #317422074281 small
+
     marker_search = MarkSearch()
 
     frames = []
@@ -265,5 +267,5 @@ if __name__ == '__main__':
         cv2.imshow('img', rgb_image)
         (u,v), vis = marker_search.find_marker(rgb_image)
         print(u,v)
-        cv2.imshow('img', np.hstack((depth_img, vis)))
+        #cv2.imshow('img', np.hstack((depth_img, vis)))
 
