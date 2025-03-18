@@ -18,10 +18,11 @@ from segment.FastSAM.fastsam import FastSAM
 from segment.SAMInference import select_from_sam_everything
 
 GRIPPER_SPEED, GRIPPER_FORCE, GRIPPER_MAX_WIDTH, GRIPPER_TOLERANCE = 0.1, 40, 0.08570, 0.01
-serial_no = '317422075456' #(camera further from robot arm)
-#serial_no = '317422074281'
+#serial_no = '317422075456' #(camera further from robot arm)
+serial_no = '317422074281'
 
-transforms = np.load(f'calib/transforms_{serial_no}.npy', allow_pickle=True).item()
+#transforms = np.load(f'calib/transforms_{serial_no}.npy', allow_pickle=True).item()
+transforms = np.load(f'calib/transforms.npy', allow_pickle=True).item()
 TCR = transforms[serial_no]['tcr']
 
 from multicam import XarmEnv
@@ -156,7 +157,10 @@ class RealsenseStreamer():
         ## Configure depth sensor settings
         depth_sensor = profile.get_device().query_sensors()[0]
         depth_sensor.set_option(rs.option.enable_auto_exposure, 1)
-        depth_sensor.set_option(rs.option.depth_units, 0.001)
+
+        # DEPTH IMAGE IN MILLIMETERS NOT METERS  
+        depth_sensor.set_option(rs.option.depth_units, 0.001) 
+        
         preset_range = depth_sensor.get_option_range(rs.option.visual_preset)
         for i in range(int(preset_range.max)):
             visualpreset = depth_sensor.get_option_value_description(rs.option.visual_preset,i)
@@ -197,23 +201,6 @@ class RealsenseStreamer():
         self.hole_filling_filter = rs.hole_filling_filter()
         print("camera started")
 
-    def deproject(self, depth_image, K, tf = np.eye(4), base_units=-3):
-        depth_image = depth_image*(10**base_units) # convert mm to m (TODO)
-        #print(depth_image.shape)
-        h,w = depth_image.shape
-        row_indices = np.arange(h)
-        col_indices = np.arange(w)
-        pixel_grid = np.meshgrid(col_indices, row_indices)
-        pixels = np.c_[pixel_grid[0].flatten(), pixel_grid[1].flatten()].T
-
-        pixels_homog = np.r_[pixels, np.ones([1, pixels.shape[1]])]
-        depth_arr = np.tile(depth_image.flatten(), [3, 1])
-        points_3d = depth_arr * np.linalg.inv(K).dot(pixels_homog)
-
-        points_3d_transf = np.vstack((points_3d, np.ones([1,points_3d.shape[1]])))
-        points_3d_transf = ((tf.dot(points_3d_transf)).T)[:, 0:3]
-
-        return points_3d_transf
 
     def deproject_pixel(self, px, depth_frame):
         u,v = px
@@ -266,10 +253,22 @@ class RealsenseStreamer():
         depth_image = np.asanyarray(depth_frame.get_data()) # self.colorizer.colorize() 
 
         #denoised_idxs = self.denoise(depth_image)
+        h, w = depth_image.shape
+        u, v = np.meshgrid(np.arange(w), np.arange(h))
+        u = u.flatten()
+        v = v.flatten()
 
-        points_3d = self.deproject(depth_image, self.K)
+        # Compute 3D points for valid pixels
+        points_3d = []
+        for u_pixel, v_pixel in zip(u, v):
+            point_3d = self.deproject_pixel((u_pixel, v_pixel), depth_frame)
+            points_3d.append(np.array(point_3d))
+        points_3d = np.array(points_3d).T
+        print(points_3d.shape)
+        points_3d = np.vstack((points_3d, np.ones([1,points_3d.shape[1]])))
+        points_3d = ((np.eye(4).dot(points_3d)).T)[:, 0:3]
+        #points_3d = self.deproject(depth_image, self.K)
         colors = cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB).reshape(points_3d.shape)/255.
-
         #points_3d = points_3d[denoised_idxs]
         #colors = colors[denoised_idxs]
         
@@ -357,18 +356,17 @@ if __name__ == "__main__":
     FLAGS = parser.parse_args()
 
     global_config = config_utils.load_config(FLAGS.ckpt_dir, batch_size=FLAGS.forward_passes, arg_configs=FLAGS.arg_configs)
+    #realsense_streamer  = RealsenseStreamer('317222072157')
+    realsense_streamer = RealsenseStreamer(serial_no) #317422074281 small
     
-    
+    t0 = time.time()
     # Build the model
     grasp_estimator = GraspEstimator(global_config)
     grasp_estimator.build_network()
 
     # Add ops to save and restore all the variables.
     saver = tf.train.Saver(save_relative_paths=True)
-    #realsense_streamer  = RealsenseStreamer('317222072157')
-    realsense_streamer = RealsenseStreamer(serial_no) #317422074281 small
 
-    t0 = time.time()
     # Create a session
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
@@ -389,6 +387,8 @@ if __name__ == "__main__":
     cv2.moveWindow(seg_cam_window, 1800, 1050)
     
     frames = []
+    positions = []
+    orientations = []
     while True:
         points_3d, colors, _, realsense_img,  depth_frame, depth_image = realsense_streamer.capture_rgbd()
         
@@ -404,10 +404,9 @@ if __name__ == "__main__":
         print('pid: %s'%(str(os.getpid())))
 
         t0 = time.time()
-        print('Generating Grasps...')
         #pred_grasps_cam, scores, contact_pts, _ = grasp_estimator.predict_scene_grasps(sess, pc_full, pc_segments=pc_segments, 
         #                                                                                  local_regions=local_regions, filter_grasps=filter_grasps, forward_passes=forward_passes)  
-        gaze = np.array([315, 274])
+        gaze = np.array([230, 343])
         print(realsense_img.shape)
         seg_model = FastSAM('./contact_graspnet/segment/FastSAM-s.pt')
         segmented_cam_img, _ = select_from_sam_everything( #Segments everything and merge masks that is closest to the point prompt
@@ -433,9 +432,12 @@ if __name__ == "__main__":
         cv2.imshow(seg_cam_window, segmented_cam_img.astype(np.uint8) * 255)
         cv2.waitKey(0)
         print('depth shape: ', depth_image.shape)
-
+        #print(depth_image)
+        depth_image = depth_image/1000
+    
         #pred_grasps_cam, scores, contact_pts, _ = grasp_estimator.predict_scene_grasps(sess, pc_full, pc_segments=None, 
-          #                                                                                local_regions=None, filter_grasps=None, forward_passes=1)  
+        #                                                                                  local_regions=None, filter_grasps=False, forward_passes=1)  
+        print('generating grasp from segmented...')
         pred_grasps_cam, scores, contact_pts, _ = grasp_estimator.predict_scene_grasps_from_depth_K_and_2d_seg(sess, depth_image, segmented_cam_img, 
                                                                                                                realsense_streamer.K, local_regions=True,
                                                                                                                  filter_grasps=True)
@@ -748,6 +750,8 @@ if __name__ == "__main__":
             orientation = transform_rotation_camera_to_robot_roll_yaw_pitch(rotation_matrix, TCR)
             print("Position: ", position_rob)
             print("Orientation: ", orientation)
+            positions.append(position_rob)
+            orientations.append(orientation)
             robot.move_to_ee_pose(position_rob, orientation)
 
         #vis.clear_geometries()
@@ -918,7 +922,8 @@ if __name__ == "__main__":
         cv2.imwrite(f"all_grasp_lines_sets_1.png", cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR))
         vis.destroy_window()
         ##############################################
-        
+        data = np.array(list(zip(grasps, positions, orientations)), dtype=object)
+        np.save("grasp_data.npy", data)
 
         sys.exit()
 
