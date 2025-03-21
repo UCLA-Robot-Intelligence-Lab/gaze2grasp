@@ -75,56 +75,15 @@ def transform_rotation_camera_to_robot_roll_yaw_pitch(rotation_cam, TCR):
     q_tcr = r_tcr.as_quat()
 
     # Multiply quaternions
-    q_rob = Rotation.from_quat(q_tcr) * Rotation.from_quat(q_cam)
-    q_rob = q_rob.as_quat()
+    q_rob = Rotation.from_quat(q_tcr).as_matrix() @ Rotation.from_quat(q_cam).as_matrix()
+    q_rob = Rotation.from_matrix(q_rob).as_quat()
 
     # Convert robot rotation to Roll-Yaw-Pitch (ZYX Euler angles)
-    r_rob = Rotation.from_quat(q_rob)
-    roll_yaw_pitch = r_rob.as_euler('zyx', degrees=True)
+    #r_rob = Rotation.from_quat(q_rob)
+    #roll_yaw_pitch = r_rob.as_euler('zyx', degrees=True)
 
-    roll, pitch, yaw = roll_yaw_pitch[2], roll_yaw_pitch[1], roll_yaw_pitch[0]
-    return np.array([roll, pitch, yaw]) # Return as (roll, pitch, yaw)
-
-def get_extrinsic_matrix(camera_position, lookat, front, up):
-    """
-    Constructs an extrinsic matrix from camera position, lookat, front, and up vectors.
-
-    Args:
-        camera_position: NumPy array (3,) representing the camera's position.
-        lookat: NumPy array (3,) representing the lookat point.
-        front: NumPy array (3,) representing the front vector.
-        up: NumPy array (3,) representing the up vector.
-
-    Returns:
-        NumPy array (4, 4) representing the extrinsic matrix.
-    """
-
-    # Normalize vectors
-    front = front / np.linalg.norm(front)
-    up = up / np.linalg.norm(up)
-
-    # Calculate right vector
-    right = np.cross(front, up)
-    right = right / np.linalg.norm(right)
-
-    # Re-calculate up vector to ensure orthogonality
-    up = np.cross(right, front)
-
-    # Construct rotation matrix
-    rotation_matrix = np.array([
-        right,
-        up,
-        -front  # Negative front because we want camera to look in that direction.
-    ]).T
-
-    # Construct extrinsic matrix
-    extrinsic_matrix = np.eye(4)
-    extrinsic_matrix[:3, :3] = rotation_matrix
-    extrinsic_matrix[:3, 3] = camera_position
-
-    return extrinsic_matrix
-
-
+    #roll, yaw, pitch = roll_yaw_pitch[0], roll_yaw_pitch[1], roll_yaw_pitch[2]
+    return q_rob #r_rob# np.array([roll, yaw, pitch]) # Return as (roll, pitch, yaw)
 
 class RealsenseStreamer():
     def __init__(self, serial_no=None):
@@ -406,7 +365,7 @@ if __name__ == "__main__":
         t0 = time.time()
         #pred_grasps_cam, scores, contact_pts, _ = grasp_estimator.predict_scene_grasps(sess, pc_full, pc_segments=pc_segments, 
         #                                                                                  local_regions=local_regions, filter_grasps=filter_grasps, forward_passes=forward_passes)  
-        gaze = np.array([230, 343])
+        gaze = np.array([222, 282])
         print(realsense_img.shape)
         seg_model = FastSAM('./contact_graspnet/segment/FastSAM-s.pt')
         segmented_cam_img, _ = select_from_sam_everything( #Segments everything and merge masks that is closest to the point prompt
@@ -456,11 +415,13 @@ if __name__ == "__main__":
         vis.create_window()
         vis.add_geometry(pcd)
 
-        #for plotting all grasps
+        cylinder_radius = 0.005  # Adjust as needed
+
+        # Visualization with Cylinders
+        start_time_cylinders = time.time()
         for i, k in enumerate(pred_grasps_cam):
             if np.any(pred_grasps_cam[k]):
                 grasps = pred_grasps_cam[k]
-                print(grasps.shape)
                 for grasp in grasps:
                     gripper_control_points_closed = grasp_line_plot.copy()
                     gripper_control_points_closed[2:6:2, 1] = np.sign(grasp_line_plot[2:6:2, 1]) * 0.08 / 2  # Change y-axis to simulate opening
@@ -473,31 +434,58 @@ if __name__ == "__main__":
                     pts = np.matmul(gripper_control_points_closed, R.T)  # Apply rotation
                     pts += t  # Apply translation
 
-                    # Flatten all_pts into a single array
-                    all_pts_array = np.vstack([pts])
+                    # Replace each line segment with a cylinder
+                    for connection in connections[0]:
+                        start_point = pts[connection[0]]
+                        end_point = pts[connection[1]]
+                        cylinder_vector = end_point - start_point
+                        cylinder_length = np.linalg.norm(cylinder_vector)
 
-                    # Create Open3D LineSet
-                    line_set = o3d.geometry.LineSet(
-                        points=o3d.utility.Vector3dVector(all_pts_array),  # Pass the flattened array
-                        lines=o3d.utility.Vector2iVector(connections[0])   # Pass the connections
-                    )
+                        cylinder_midpoint = (start_point + end_point) / 2
+                        cylinder_direction = cylinder_vector / cylinder_length
 
-                    # Set color for the gripper
-                    line_set.paint_uniform_color([0, 0, 0])  # Black color
 
-                    # Add LineSet to the visualizer
-                    vis.add_geometry(line_set)
+                        # Create cylinder
+                        cylinder_segment = o3d.geometry.TriangleMesh.create_cylinder(
+                            cylinder_radius, cylinder_length,
+                            resolution=4,
+                            split=1,
+                        )
 
-        # Add semantic waypoint (blue sphere)
+                        # Create rotation matrix to align cylinder
+                        z_axis = np.array([0, 0, 1])
+                        rotation_axis = np.cross(z_axis, cylinder_direction)
+
+                        # Ensure cylinder_direction is a 1D array with shape (3,)
+                        cylinder_direction = cylinder_direction.flatten()
+                        rotation_angle = np.arccos(np.dot(z_axis, cylinder_direction))
+
+                        if np.linalg.norm(rotation_axis) > 0:  # Avoid division by zero
+                            rotation_matrix = o3d.geometry.get_rotation_matrix_from_axis_angle(
+                                rotation_angle * rotation_axis / np.linalg.norm(rotation_axis)
+                            )
+                            cylinder_segment.rotate(rotation_matrix, center=(0, 0, 0))
+
+                        # Translate cylinder to midpoint
+                        cylinder_segment.translate(cylinder_midpoint)
+
+                        # Set color
+                        cylinder_segment.paint_uniform_color([0, 0, 0])
+
+                        # Add to visualizer
+                        vis.add_geometry(cylinder_segment)
+
+        end_time_cylinders = time.time()
+        cylinder_time = end_time_cylinders - start_time_cylinders
+        print(f"Time to visualize with cylinders: {cylinder_time:.4f} seconds")
+        # Print message
+        print("Getting image of all predicted grasps with gaze point")
+
         semantic_waypoint = realsense_streamer.deproject_pixel(gaze, depth_frame)
         sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)  # Adjust radius as needed
         sphere.translate(semantic_waypoint)  # Translate to the semantic waypoint
         sphere.paint_uniform_color([0, 0, 1])  # Blue color (RGB)
         vis.add_geometry(sphere)
-        vis.run()
-
-        # Print message
-        print("Getting image of all predicted grasps with gaze point")
 
         # Set the view using the loaded extrinsic matrix
         view_control = vis.get_view_control()
@@ -523,14 +511,11 @@ if __name__ == "__main__":
         closest_grasps = find_closest_grasp(pred_grasps_cam, gaze, depth_frame, realsense_streamer)
         grasps = distinct_grasps
         grasps.append(closest_grasps)
-        base_link_color = [[1, 0.5, 1], [0.5, 1, 1], [1, 1, 0.5], [0.5, 0.5, 1]]
+        base_link_color = [[1, 0.5, 1], [0.5, 1, 1], [1, 1, 0.5], [1, 0.5, 0]]
         for i, grasp in enumerate(grasps):
             gripper = visualize_gripper(grasp, base_link_color[i])
-          # gripper_pink = visualize_gripper(grasp, [1, 0.5, 1])
             grippers.append(gripper)
-          # grippers_pink.append(gripper_pink)
             ##############################################
-            # Simulate gripper opening by adjusting y-axis values
             gripper_control_points_closed = grasp_line_plot.copy()
             gripper_control_points_closed[2:6:2, 1] = np.sign(grasp_line_plot[2:6:2, 1]) * 0.08 / 2  # Change y-axis to simulate opening
 
@@ -542,21 +527,50 @@ if __name__ == "__main__":
             pts = np.matmul(gripper_control_points_closed, R.T)  # Apply rotation
             pts += t  # Apply translation
 
-            # Flatten all_pts into a single array
-            all_pts_array = np.vstack([pts])
-
-            # Create Open3D LineSet
-            line_set = o3d.geometry.LineSet(
-                points=o3d.utility.Vector3dVector(all_pts_array),  # Pass the flattened array
-                lines=o3d.utility.Vector2iVector(connections[0])   # Pass the connections
-            )
-
-            # Set color for the gripper
-            line_set.paint_uniform_color(base_link_color[i])  # Red color
-
             vis.clear_geometries()
             vis.add_geometry(pcd)
-            vis.add_geometry(line_set)
+
+            # Replace each line segment with a cylinder
+            for connection in connections[0]:
+                start_point = pts[connection[0]]
+                end_point = pts[connection[1]]
+                cylinder_vector = end_point - start_point
+                cylinder_length = np.linalg.norm(cylinder_vector)
+                cylinder_midpoint = (start_point + end_point) / 2
+                cylinder_direction = cylinder_vector / cylinder_length
+
+
+                # Create cylinder
+                cylinder_segment = o3d.geometry.TriangleMesh.create_cylinder(
+                    cylinder_radius, cylinder_length,
+                    resolution=4,
+                    split=1,
+                )
+
+                # Create rotation matrix to align cylinder
+                z_axis = np.array([0, 0, 1])
+                rotation_axis = np.cross(z_axis, cylinder_direction)
+
+                # Ensure cylinder_direction is a 1D array with shape (3,)
+                cylinder_direction = cylinder_direction.flatten()
+                rotation_angle = np.arccos(np.dot(z_axis, cylinder_direction))
+
+                if np.linalg.norm(rotation_axis) > 0:  # Avoid division by zero
+                    rotation_matrix = o3d.geometry.get_rotation_matrix_from_axis_angle(
+                        rotation_angle * rotation_axis / np.linalg.norm(rotation_axis)
+                    )
+                    cylinder_segment.rotate(rotation_matrix, center=(0, 0, 0))
+
+                # Translate cylinder to midpoint
+                cylinder_segment.translate(cylinder_midpoint)
+
+                # Set color
+                cylinder_segment.paint_uniform_color(base_link_color[i])
+
+                # Add to visualizer
+                vis.add_geometry(cylinder_segment)
+
+            
 
             print("Getting image of gripper line set")
 
@@ -663,41 +677,6 @@ if __name__ == "__main__":
             image_array = (255.0 * float_array).astype(np.uint8)
             cv2.imwrite(f"gripper{i}_1.png", cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR))
             ##############################################
-            '''vis.clear_geometries()
-            vis.add_geometry(pcd)
-            for part in gripper_pink:
-                vis.add_geometry(part)
-
-            print("Getting image of pink gripper")
-
-            # Set the view using the loaded extrinsic matrix
-            view_control = vis.get_view_control()
-            param = view_control.convert_to_pinhole_camera_parameters()
-            param.extrinsic = extrinsic_matrix
-            view_control.convert_from_pinhole_camera_parameters(param)
-
-            vis.update_renderer()
-            vis.poll_events()
-            time.sleep(1)
-            float_buffer = vis.capture_screen_float_buffer()
-            float_array = np.asarray(float_buffer)
-            image_array = (255.0 * float_array).astype(np.uint8)
-            cv2.imwrite(f"gripper_pink{i}.png", cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR))
-
-            # Second camera view
-            view_control = vis.get_view_control()
-            param = view_control.convert_to_pinhole_camera_parameters()
-            param.extrinsic = extrinsic_matrix1
-            view_control.convert_from_pinhole_camera_parameters(param)
-
-            vis.update_renderer()
-            vis.poll_events()
-            time.sleep(1)
-            float_buffer = vis.capture_screen_float_buffer()
-            float_array = np.asarray(float_buffer)
-            image_array = (255.0 * float_array).astype(np.uint8)
-            cv2.imwrite(f"gripper_pink{i}_1.png", cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR))'''
-            ##############################################
             R = np.array(grasp[:3, :3])  # Extract rotation
             t = np.array(grasp[:3, 3])   # Extract translation (position)
             grasp_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.09, origin=t)  # Adjust size as needed
@@ -747,12 +726,15 @@ if __name__ == "__main__":
             position_cam = 1000.0*np.array(grasp[:3, 3])  # Extract translation
             position_rob = np.array(transform(np.array(position_cam).reshape(1,3), TCR))[0]
             rotation_matrix = grasp[:3, :3]
-            orientation = transform_rotation_camera_to_robot_roll_yaw_pitch(rotation_matrix, TCR)
+            
+            quat_orientation = transform_rotation_camera_to_robot_roll_yaw_pitch(rotation_matrix, TCR)
             print("Position: ", position_rob)
-            print("Orientation: ", orientation)
+            print("Orientation: ", quat_orientation)
             positions.append(position_rob)
+            
+            orientation = robot.move_to_fingertip_pose(position_rob, quat_orientation)
             orientations.append(orientation)
-            robot.move_to_ee_pose(position_rob, orientation)
+            #robot.move_to_ee_pose(position_rob, orientation)
 
         #vis.clear_geometries()
         print("Getting image of all the coloured grippers")
@@ -788,40 +770,6 @@ if __name__ == "__main__":
         float_array = np.asarray(float_buffer)
         image_array = (255.0 * float_array).astype(np.uint8)
         cv2.imwrite(f"all_gripper_1.png", cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR))
-        ##############################################
-        '''print("Getting image of all pink grippers")
-        vis.clear_geometries()
-        vis.add_geometry(pcd)
-        for gripper in grippers_pink:
-            for part in gripper:
-                vis.add_geometry(part)
-
-        # Set the view using the loaded extrinsic matrix
-        view_control = vis.get_view_control()
-        param = view_control.convert_to_pinhole_camera_parameters()
-        param.extrinsic = extrinsic_matrix
-        view_control.convert_from_pinhole_camera_parameters(param)
-
-        vis.update_renderer()
-        vis.poll_events()
-        time.sleep(1)
-        float_buffer = vis.capture_screen_float_buffer()
-        float_array = np.asarray(float_buffer)
-        image_array = (255.0 * float_array).astype(np.uint8)
-        cv2.imwrite(f"all_gripper_pink.png", cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR))
-        #second camera view
-        view_control = vis.get_view_control()
-        param = view_control.convert_to_pinhole_camera_parameters()
-        param.extrinsic = extrinsic_matrix1
-        view_control.convert_from_pinhole_camera_parameters(param)
-
-        vis.update_renderer()
-        vis.poll_events()
-        time.sleep(1)
-        float_buffer = vis.capture_screen_float_buffer()
-        float_array = np.asarray(float_buffer)
-        image_array = (255.0 * float_array).astype(np.uint8)
-        cv2.imwrite(f"all_gripper_pink_1.png", cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR))'''
         ##############################################
         print("Getting image of all gripper axes")
         vis.clear_geometries()
@@ -880,19 +828,46 @@ if __name__ == "__main__":
             pts = np.matmul(gripper_control_points_closed, R.T)  # Apply rotation
             pts += t  # Apply translation
 
-            # Flatten all_pts into a single array
-            all_pts_array = np.vstack([pts])
+            # Replace each line segment with a cylinder
+            for connection in connections[0]:
+                start_point = pts[connection[0]]
+                end_point = pts[connection[1]]
+                cylinder_vector = end_point - start_point
+                cylinder_length = np.linalg.norm(cylinder_vector)
+                cylinder_midpoint = (start_point + end_point) / 2
+                cylinder_direction = cylinder_vector / cylinder_length
 
-            # Create Open3D LineSet
-            line_set = o3d.geometry.LineSet(
-                points=o3d.utility.Vector3dVector(all_pts_array),  # Pass the flattened array
-                lines=o3d.utility.Vector2iVector(connections[0])   # Pass the connections
-            )
 
-            # Set color for the gripper
-            line_set.paint_uniform_color(base_link_color[i]) 
-            # Add to the visualizer
-            vis.add_geometry(line_set)
+                # Create cylinder
+                cylinder_segment = o3d.geometry.TriangleMesh.create_cylinder(
+                    cylinder_radius, cylinder_length,
+                    resolution=4,
+                    split=1,
+                )
+
+                # Create rotation matrix to align cylinder
+                z_axis = np.array([0, 0, 1])
+                rotation_axis = np.cross(z_axis, cylinder_direction)
+
+                # Ensure cylinder_direction is a 1D array with shape (3,)
+                cylinder_direction = cylinder_direction.flatten()
+                rotation_angle = np.arccos(np.dot(z_axis, cylinder_direction))
+
+                if np.linalg.norm(rotation_axis) > 0:  # Avoid division by zero
+                    rotation_matrix = o3d.geometry.get_rotation_matrix_from_axis_angle(
+                        rotation_angle * rotation_axis / np.linalg.norm(rotation_axis)
+                    )
+                    cylinder_segment.rotate(rotation_matrix, center=(0, 0, 0))
+
+                # Translate cylinder to midpoint
+                cylinder_segment.translate(cylinder_midpoint)
+
+                # Set color
+                cylinder_segment.paint_uniform_color(base_link_color[i])
+
+                # Add to visualizer
+                vis.add_geometry(cylinder_segment)
+
 
         # Set the view using the loaded extrinsic matrix
         view_control = vis.get_view_control()
