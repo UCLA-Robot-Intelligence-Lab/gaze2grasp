@@ -103,6 +103,7 @@ class XarmEnv:
         self.arm.set_mode(0)
         self.arm.set_state(state=0)
         self.arm.set_servo_angle(angle=[0, 0, 0, 70, 0, 70, 0], speed=50, wait=True)
+        print('homing', self.pose_ee())
 
 
         
@@ -110,17 +111,60 @@ class XarmEnv:
         _, initial_pose = self.arm.get_position(is_radian=False)
         current_position = np.array(initial_pose[:3])
         current_orientation = np.array(initial_pose[3:])
+        rot = R.from_euler('zyx', current_orientation)
+        quat = rot.as_quat()
+        print('curr quat', quat)
         #print(initial_pose)
         return current_position, current_orientation
 
     def move_to_ee_pose(self,position,orietation):
         #ret = self.arm.set_servo_cartesian(np.concatenate((position, orietation)), is_radian=False, speed=1, wait=True)
-        ret = self.arm.set_position(x=position[0], y=position[1], z=position[2], roll=orietation[0], pitch=orietation[1], yaw=orietation[2], speed=200, is_radian=False, wait=True)
+        ret = self.arm.set_position(x=position[0], y=position[1], z=position[2], roll=orietation[0], yaw=orietation[1], pitch=orietation[2], speed=200, is_radian=False, wait=True)
         #print(f"Return value from set_servo_cartesian: {ret}")
         return ret
+    
 
+    def robot_fingertip_pos_to_ee(self,position,quat_orietation):
 
+        HOME_QUAT = np.array([ -0.016411,    -0.37785,    0.92533,   -0.026844]) #[ 0.9367,  0.3474, -0.0088, -0.0433])
+        FINGERTIP_OFFSET = np.array([0,0,-0.095])
+        home_euler = R.from_quat(HOME_QUAT).as_euler('zyx', degrees=True)
 
+        ee_euler = R.from_quat(quat_orietation).as_euler('zyx', degrees=True)
+
+        offset_euler = ee_euler - home_euler
+
+        fingertip_offset_euler = offset_euler * [1,-1,1]
+        fingertip_transf = R.from_euler('zyx', fingertip_offset_euler, degrees=True)
+        fingertip_offset = fingertip_transf.as_matrix() @ FINGERTIP_OFFSET
+        #fingertip_offset[2] -= 0.9*FINGERTIP_OFFSET[2]
+        fingertip_offset[2] -= FINGERTIP_OFFSET[2]
+
+        ee_pos = position - fingertip_offset
+        return ee_pos, ee_euler
+    
+    def move_to_fingertip_pose(self,position,quat_orietation):
+        quat_orietation=np.array([ -0.016411,    -0.37785,    0.92533,   -0.026844])
+        ee_pos, ee_euler = self.robot_fingertip_pos_to_ee(position,quat_orietation)
+        
+        self.move_to_ee_pose(ee_pos, ee_euler)
+
+def robot_ee_to_fingertip_pos(ee_pos, ee_quat):
+    HOME_QUAT = np.array([ 0.9367,  0.3474, -0.0088, -0.0433])
+    FINGERTIP_OFFSET = np.array([0,0,-0.095])
+
+    home_euler = R.from_quat(HOME_QUAT).as_euler('zyx', degrees=True)
+    ee_euler = R.from_quat(ee_quat).as_euler('zyx', degrees=True)
+    offset_euler = ee_euler - home_euler
+    fingertip_offset_euler = offset_euler * [1,-1,1]
+
+    fingertip_transf = R.from_euler('zyx', fingertip_offset_euler, degrees=True)
+    fingertip_offset = fingertip_transf.as_matrix() @ FINGERTIP_OFFSET
+    #fingertip_offset[2] -= 0.9*FINGERTIP_OFFSET[2]
+    fingertip_offset[2] -= FINGERTIP_OFFSET[2]
+
+    fingertip_pos = np.array([ee_pos[0], ee_pos[1], ee_pos[2]]) + fingertip_offset
+    return fingertip_pos
 
 
 class MultiCam:
@@ -140,40 +184,6 @@ class MultiCam:
         else:
             self.icp_tf = None
 
-    def robot_fingertip_pos_to_ee(self, fingertip_pos, ee_quat):
-        HOME_QUAT = np.array([ 0.9367,  0.3474, -0.0088, -0.0433])
-        FINGERTIP_OFFSET = np.array([0,0,-0.095])
-        home_euler = R.from_quat(HOME_QUAT).as_euler('zyx', degrees=True)
-
-        ee_euler = R.from_quat(ee_quat).as_euler('zyx', degrees=True)
-
-        offset_euler = ee_euler - home_euler
-
-        fingertip_offset_euler = offset_euler * [1,-1,1]
-        fingertip_transf = R.from_euler('zyx', fingertip_offset_euler, degrees=True)
-        fingertip_offset = fingertip_transf.as_matrix() @ FINGERTIP_OFFSET
-        #fingertip_offset[2] -= 0.9*FINGERTIP_OFFSET[2]
-        fingertip_offset[2] -= FINGERTIP_OFFSET[2]
-
-        ee_pos = fingertip_pos - fingertip_offset
-        return ee_pos
-
-    def robot_ee_to_fingertip_pos(self, ee_pos, ee_quat):
-        HOME_QUAT = np.array([ 0.9367,  0.3474, -0.0088, -0.0433])
-        FINGERTIP_OFFSET = np.array([0,0,-0.095])
-
-        home_euler = R.from_quat(HOME_QUAT).as_euler('zyx', degrees=True)
-        ee_euler = R.from_quat(ee_quat).as_euler('zyx', degrees=True)
-        offset_euler = ee_euler - home_euler
-        fingertip_offset_euler = offset_euler * [1,-1,1]
-
-        fingertip_transf = R.from_euler('zyx', fingertip_offset_euler, degrees=True)
-        fingertip_offset = fingertip_transf.as_matrix() @ FINGERTIP_OFFSET
-        #fingertip_offset[2] -= 0.9*FINGERTIP_OFFSET[2]
-        fingertip_offset[2] -= FINGERTIP_OFFSET[2]
-
-        fingertip_pos = np.array([ee_pos[0], ee_pos[1], ee_pos[2]]) + fingertip_offset
-        return fingertip_pos
 
     #def project_fingertip_pos(self, fingertip_pos):
     #    waypoints_proj = {cam.serial_no:None for cam in self.cameras}
@@ -341,9 +351,38 @@ class MultiCam:
    
 if __name__ == "__main__":
     # calibration
-    multi_cam = MultiCam(['317422075456']) 
-    multi_cam.calibrate_cam()
+    #multi_cam = MultiCam(['317422075456']) 
+    #multi_cam.calibrate_cam()
 
     # Uncomment to take an image + merged point cloud
     #multi_cam = MultiCam(['317422075456']) 
     #rgb_images, depth_images, pcd_merged = multi_cam.take_rgbd()
+    robot = XarmEnv()
+    from scipy.spatial.transform import Rotation as R
+    '''
+    # Convert the desired orientation from Euler angles to a quaternion
+    desired_orientation_euler = [   90,     90,     90]
+    desired_orientation_quat = R.from_euler('zyx', desired_orientation_euler, degrees=True).as_quat()
+    ee_pos = robot_fingertip_pos_to_ee([      200,       210,     250], desired_orientation_quat)
+    robot.move_to_ee_pose(ee_pos, desired_orientation_quat)
+
+    desired_orientation_euler = [   90,     30,     90]
+    desired_orientation_quat = R.from_euler('zyx', desired_orientation_euler, degrees=True).as_quat()
+    ee_pos = robot_fingertip_pos_to_ee([      200,       210,     250], desired_orientation_quat)
+    robot.move_to_ee_pose(ee_pos, desired_orientation_euler)
+
+    desired_orientation_euler = [   90,     90,     30]
+    desired_orientation_quat = R.from_euler('zyx', desired_orientation_euler, degrees=True).as_quat()
+    ee_pos = robot_fingertip_pos_to_ee([      200,       210,     250], desired_orientation_quat)
+    robot.move_to_ee_pose(ee_pos, desired_orientation_euler)
+   
+    '''
+    robot.move_to_ee_pose(
+                     [      237.7,       4.384 ,     210.64], [    -142.95,      41.758,     -153.95],
+                )
+    robot.move_to_ee_pose(
+                     [      237.7,       4.384 ,     210.64], [    -142.95,     -153.95,      41.758],
+                )
+    robot.move_to_ee_pose(
+                     [      237.7,       4.384 ,     210.64], [    -153.95,     -142.95,      41.758],
+                )
