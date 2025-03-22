@@ -237,8 +237,8 @@ def visualize_gripper_with_cylinders(vis, grasps, pcd, connections, base_color):
     vis.clear_geometries()
     vis.add_geometry(pcd)
     for i, grasp in enumerate(grasps):
-        print(grasp)
-        print(base_color[i])
+        #print(grasp)
+        #print(base_color[i])
         gripper_control_points_closed = grasp_line_plot.copy()
         gripper_control_points_closed[2:6:2, 1] = np.sign(grasp_line_plot[2:6:2, 1]) * GRIPPER_MAX_WIDTH / 2
         
@@ -426,6 +426,7 @@ if __name__ == "__main__":
             position_cam = 1000.0 * np.array(grasp[:3, 3])  # Extract translation
             position_rob = np.array(transform(np.array(position_cam).reshape(1, 3), TCR))[0]
             rotation_matrix = grasp[:3, :3]
+            #rotation_matrix = np.eye(3)
             orientation = transform_rotation_camera_to_robot_roll_yaw_pitch(rotation_matrix, TCR)
             print("Position: ", position_rob)
             print("Orientation: ", orientation)
@@ -434,7 +435,7 @@ if __name__ == "__main__":
             robot.move_to_ee_pose(position_rob, orientation)
 
         # Visualizing all grasps
-        process_grasp(grasps, full_save_folder, '_all', base_link_color)
+        process_grasp(grasps, full_save_folder, '_all_', base_link_color)
 
         # Saving all the data
         data = np.array(list(zip(grasps, positions, orientations)), dtype=object)
