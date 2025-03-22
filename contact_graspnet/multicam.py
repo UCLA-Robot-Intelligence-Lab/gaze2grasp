@@ -104,6 +104,8 @@ class XarmEnv:
         self.arm.set_state(state=0)
         self.arm.set_servo_angle(angle=[0, 0, 0, 70, 0, 70, 0], speed=50, wait=True)
         print('homing', self.pose_ee())
+        #curr quat [  -0.016411    -0.37785     0.92533   -0.026844]
+        #pos, orientation = (array([     475.73,      1.4586,       416.7]), array([     179.13,   -0.010084,     0.77567]))
 
 
         
@@ -119,7 +121,7 @@ class XarmEnv:
 
     def move_to_ee_pose(self,position,orietation):
         #ret = self.arm.set_servo_cartesian(np.concatenate((position, orietation)), is_radian=False, speed=1, wait=True)
-        ret = self.arm.set_position(x=position[0], y=position[1], z=position[2], roll=orietation[0], yaw=orietation[1], pitch=orietation[2], speed=200, is_radian=False, wait=True)
+        ret = self.arm.set_position(x=position[0], y=position[1], z=position[2], roll=orietation[0], pitch=orietation[1], yaw=orietation[2], speed=200, is_radian=False, wait=True)
         #print(f"Return value from set_servo_cartesian: {ret}")
         return ret
     
@@ -127,7 +129,7 @@ class XarmEnv:
     def robot_fingertip_pos_to_ee(self,position,quat_orietation):
 
         HOME_QUAT = np.array([ -0.016411,    -0.37785,    0.92533,   -0.026844]) #[ 0.9367,  0.3474, -0.0088, -0.0433])
-        FINGERTIP_OFFSET = np.array([0,0,-0.095])
+        FINGERTIP_OFFSET = np.array([0, 0, -0.172]) 
         home_euler = R.from_quat(HOME_QUAT).as_euler('zyx', degrees=True)
 
         ee_euler = R.from_quat(quat_orietation).as_euler('zyx', degrees=True)
@@ -150,8 +152,9 @@ class XarmEnv:
         self.move_to_ee_pose(ee_pos, ee_euler)
 
 def robot_ee_to_fingertip_pos(ee_pos, ee_quat):
-    HOME_QUAT = np.array([ 0.9367,  0.3474, -0.0088, -0.0433])
-    FINGERTIP_OFFSET = np.array([0,0,-0.095])
+    HOME_QUAT = np.array([ -0.016411,    -0.37785,    0.92533,   -0.026844]) #[ 0.9367,  0.3474, -0.0088, -0.0433])
+    FINGERTIP_OFFSET = np.array([0, 0, -0.172]) 
+
 
     home_euler = R.from_quat(HOME_QUAT).as_euler('zyx', degrees=True)
     ee_euler = R.from_quat(ee_quat).as_euler('zyx', degrees=True)
@@ -358,7 +361,7 @@ if __name__ == "__main__":
     #multi_cam = MultiCam(['317422075456']) 
     #rgb_images, depth_images, pcd_merged = multi_cam.take_rgbd()
     robot = XarmEnv()
-    from scipy.spatial.transform import Rotation as R
+    from scipy.spatial.transform import Rotation 
     '''
     # Convert the desired orientation from Euler angles to a quaternion
     desired_orientation_euler = [   90,     90,     90]
@@ -377,12 +380,34 @@ if __name__ == "__main__":
     robot.move_to_ee_pose(ee_pos, desired_orientation_euler)
    
     '''
+    '''def rotation_matrix_to_yaw_pitch_roll(R):
+        """
+        Convert a 3x3 rotation matrix to yaw, pitch, and roll angles (ZYX sequence).
+        """
+        yaw = np.arctan2(R[1, 0], R[0, 0])  # atan2(r21, r11)
+        pitch = np.arctan2(-R[2, 0], np.sqrt(R[2, 1]**2 + R[2, 2]**2))  # atan2(-r31, sqrt(r32^2 + r33^2))
+        roll = np.arctan2(R[2, 1], R[2, 2])  # atan2(r32, r33)
+        return np.array([yaw, pitch, roll])'''
+    
+    def transform_rotation_camera_to_robot_roll_yaw_pitch(TCR, rotation_cam = np.eye(3)):
+        r_cam = Rotation.from_matrix(rotation_cam)
+        q_cam = r_cam.as_quat()
+        r_tcr = Rotation.from_matrix(TCR[:3, :3])
+        q_tcr = r_tcr.as_quat()
+        q_rob = Rotation.from_quat(q_tcr) * Rotation.from_quat(q_cam)
+        euler_angles = q_rob.as_euler('zyx', degrees=True)
+        return np.array([euler_angles[2], euler_angles[1], euler_angles[0]])
+    
+    transforms = np.load('calib/transforms.npy', allow_pickle=True).item()
+    TRC = transforms['317422074281']['trc'][:3,:3]
+    TCR = transforms['317422074281']['tcr'][:3,:3]
+    print(TRC)
+    print(TCR)
+    yaw, pitch, roll = transform_rotation_camera_to_robot_roll_yaw_pitch(TRC)
+    print("Yaw (Z):", np.degrees(yaw))
+    print("Pitch (Y):", np.degrees(pitch))
+    print("Roll (X):", np.degrees(roll))
     robot.move_to_ee_pose(
-                     [      237.7,       4.384 ,     210.64], [    -142.95,      41.758,     -153.95],
-                )
-    robot.move_to_ee_pose(
-                     [      237.7,       4.384 ,     210.64], [    -142.95,     -153.95,      41.758],
-                )
-    robot.move_to_ee_pose(
-                     [      237.7,       4.384 ,     210.64], [    -153.95,     -142.95,      41.758],
+
+                     [      300,       0,     250], [    roll,     pitch,     yaw],
                 )
