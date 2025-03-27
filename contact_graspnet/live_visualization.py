@@ -195,16 +195,6 @@ connections = [np.array([
     [5, 3]   # Finger 2 mid to finger 2 tip
 ])]
 
-# Function to transform rotation from camera to robot frame
-def transform_rotation_camera_to_robot_roll_yaw_pitch(rotation_cam, TCR):
-    r_cam = Rotation.from_matrix(rotation_cam)
-    q_cam = r_cam.as_quat()
-    r_tcr = Rotation.from_matrix(TCR[:3, :3])
-    q_tcr = r_tcr.as_quat()
-    q_rob = Rotation.from_quat(q_tcr) * Rotation.from_quat(q_cam)
-    roll_yaw_pitch = q_rob.as_euler('zyx', degrees=True)
-    return np.array([roll_yaw_pitch[2], roll_yaw_pitch[1], roll_yaw_pitch[0]])
-
 # Function to create a cylinder for visualization
 def create_cylinder(start_point, end_point, radius, color):
     cylinder_vector = end_point - start_point
@@ -328,9 +318,9 @@ def process_grasp(grasp, save_folder, i, base_link_color):
     set_camera_view_and_save_image(vis, extrinsic_matrix1, os.path.join(save_folder, f"grasp_lines{i}b.png"))
 
     # Visualize and save gripper with arm
-    visualize_gripper_with_arm(vis, grasp, pcd, color)
-    set_camera_view_and_save_image(vis, extrinsic_matrix, os.path.join(save_folder,f"grasp_arm{i}a.png"))
-    set_camera_view_and_save_image(vis, extrinsic_matrix1, os.path.join(save_folder,f"grasp_arm{i}b.png"))
+    #visualize_gripper_with_arm(vis, grasp, pcd, color)
+    #set_camera_view_and_save_image(vis, extrinsic_matrix, os.path.join(save_folder,f"grasp_arm{i}a.png"))
+    #set_camera_view_and_save_image(vis, extrinsic_matrix1, os.path.join(save_folder,f"grasp_arm{i}b.png"))
 
     # Visualize and save gripper with axes
     visualize_gripper_with_axes(vis, grasp, pcd, color)
@@ -363,12 +353,14 @@ if __name__ == "__main__":
     config.gpu_options.allow_growth = True
     config.allow_soft_placement = True
     sess = tf.Session(config=config)
+    print(config)
+    print(sess)
     #print('Session created: ', sess.list_devices())
     grasp_estimator.load_weights(sess, saver, FLAGS.ckpt_dir, mode='test')
 
     while True:
         pcd, realsense_img, depth_frame, depth_image = capture_and_process_rgbd(realsense_streamer)
-        gaze = np.array([222, 282])
+        gaze = np.array([274, 242])
 
         base_folder = "vlm_images"
         while True:
@@ -392,13 +384,12 @@ if __name__ == "__main__":
         cv2.waitKey(0)
 
         depth_image = depth_image / 1000
-        pred_grasps_cam, _, _, _ = predict_grasps(grasp_estimator, sess, depth_image, segmented_cam_img, realsense_streamer.K)
-
+        pred_grasps_cam, _, _, pred_gripper_openings = predict_grasps(grasp_estimator, sess, depth_image, segmented_cam_img, realsense_streamer.K)
+        print('Predicted grasps:', pred_grasps_cam[True].shape[0])
         extrinsic_matrix = np.load(f"./calib/extrinsic_{SERIAL_NO}.npy")
         extrinsic_matrix1 = np.load(f"./calib/extrinsic_{SERIAL_NO}_1.npy")
         vis = o3d.visualization.Visualizer()
         vis.create_window()
-        
         # Visualize all the predicted grasps
         visualize_gripper_with_cylinders(vis, pred_grasps_cam[True], pcd, connections, [[0, 0, 0] for _ in range(pred_grasps_cam[True].shape[0])])
         semantic_waypoint = realsense_streamer.deproject_pixel(gaze, depth_frame)
@@ -409,11 +400,15 @@ if __name__ == "__main__":
         set_camera_view_and_save_image(vis, extrinsic_matrix, os.path.join(full_save_folder, F"pred_grasp_lines_w_gaze.png"))  
         
         # Select the options for VLM
-        distinct_grasps = find_distinct_grasps(pred_grasps_cam, gaze, depth_frame, realsense_streamer, n_grasps=3, max_distance=0.2)
-        closest_grasps = find_closest_grasp(pred_grasps_cam, gaze, depth_frame, realsense_streamer)
+        distinct_grasps, distinct_openings = find_distinct_grasps(pred_grasps_cam, pred_gripper_openings, gaze, depth_frame, realsense_streamer, n_grasps=3, max_distance=0.2)
+        closest_grasps, closest_opening = find_closest_grasp(pred_grasps_cam, pred_gripper_openings, gaze, depth_frame, realsense_streamer)
         grasps = distinct_grasps
+        openings = distinct_openings
         grasps.append(closest_grasps)
+        openings.append(closest_opening)
         grasps = np.array(grasps)
+        openings = np.array(openings)*1000
+        print(openings)
 
         # Visualizing single grasps
         base_link_color = [[1, 0.5, 1], [0.5, 1, 1], [1, 1, 0.5], [1, 0.5, 0]]
@@ -423,16 +418,21 @@ if __name__ == "__main__":
 
             # Move robot to the grasp pose
             print("Moving to pose")
-            position_cam = 1000.0 * np.array(grasp[:3, 3])  # Extract translation
-            position_rob = np.array(transform(np.array(position_cam).reshape(1, 3), TCR))[0]
-            rotation_matrix = grasp[:3, :3]
-            #rotation_matrix = np.eye(3)
-            orientation = transform_rotation_camera_to_robot_roll_yaw_pitch(rotation_matrix, TCR)
-            print("Position: ", position_rob)
-            print("Orientation: ", orientation)
-            positions.append(position_rob)
-            orientations.append(orientation)
-            robot.move_to_ee_pose(position_rob, orientation)
+            robot.grasp(None)
+            robot.go_home()
+            position_fingertip = TCR[:3, :3] @ (1000.0 * grasp[:3, 3]) + TCR[:3, 3]
+            rotation_matrix_rob = TCR[:3, :3] @ grasp[:3, :3]
+            approach_dir_base = rotation_matrix_rob[:, 2]
+            position_ee = position_fingertip + 90.0 * approach_dir_base
+            rot = Rotation.from_matrix(rotation_matrix_rob)
+            [yaw, pitch, roll] = rot.as_euler('ZYX', degrees=True)
+            print("Adjusted Position (EE Frame): ", position_ee)
+            print("Orientation (EE Frame): ", [roll, pitch, yaw])
+            positions.append(position_ee)
+            orientations.append([roll, pitch, yaw])
+            robot.move_to_ee_pose(position_ee, [roll, pitch, yaw])
+            robot.grasp(openings[i])
+            
 
         # Visualizing all grasps
         process_grasp(grasps, full_save_folder, '_all_', base_link_color)

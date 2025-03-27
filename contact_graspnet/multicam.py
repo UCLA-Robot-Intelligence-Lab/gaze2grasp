@@ -27,6 +27,13 @@ from dataclasses import dataclass
 
 GRIPPER_SPEED, GRIPPER_FORCE, GRIPPER_MAX_WIDTH, GRIPPER_TOLERANCE = 0.1, 40, 0.08570, 0.01
 
+def is_position_in_range(position, x_range=(60, 550), y_range=(-550, 550), z_range=(20, 600)):
+    """Check if position is within valid workspace ranges."""
+    x, y, z = position
+    return (x_range[0] <= x <= x_range[1] and
+            y_range[0] <= y <= y_range[1] and
+            z_range[0] <= z <= z_range[1])
+
 ip = '192.168.1.223'
 
 @dataclass
@@ -68,7 +75,10 @@ class XarmEnv:
         if ret != 0:
             print(f"Error in motion_enable: {ret}")
             sys.exit(1)
-
+        ret = self.arm.set_gripper_enable(True)
+        if ret != 0:
+            print(f"Error in gripper_enable: {ret}")
+            sys.exit(1)
             
         self.arm.set_tcp_maxacc(xarm_cfg.tcp_maxacc)  
         self.arm.set_mode(0)
@@ -83,8 +93,7 @@ class XarmEnv:
         if ret != 0:
             print(f"Error in set_state: {ret}")
             sys.exit(1)
-
-
+        
         ret, state = self.arm.get_state()
         if ret != 0:
             print(f"Error getting robot state: {ret}")
@@ -97,17 +106,45 @@ class XarmEnv:
             print(f"Robot is ready to move. Current state: {state}")
         
         self.go_home()
+        self.grasp(None)
+
+
+    def grasp(self, grasp):
+        #0 is open
+        #1 is closed
+        gripper_open = 800
+        gripper_closed = 0
+        if grasp == None:
+            ret = self.arm.set_gripper_position(gripper_open, wait=False)
+            if ret != 0:
+                print(f"Error in set_gripper_position (close): {ret}")
+        else:
+            grasp = min(grasp, gripper_open)
+            grasp = max(grasp, gripper_closed)
+            ret = self.arm.set_gripper_position(grasp, wait=False)
+            if ret != 0:
+                print(f"Error in set_gripper_position (open): {ret}")
 
 
     def go_home(self):
         self.arm.set_mode(0)
         self.arm.set_state(state=0)
         self.arm.set_servo_angle(angle=[0, 0, 0, 70, 0, 70, 0], speed=50, wait=True)
-        print('homing', self.pose_ee())
+        #print('homing', self.pose_ee_radian())
         #curr quat [  -0.016411    -0.37785     0.92533   -0.026844]
         #pos, orientation = (array([     475.73,      1.4586,       416.7]), array([     179.13,   -0.010084,     0.77567]))
 
 
+    def pose_ee_radian(self):
+        _, initial_pose = self.arm.get_position(is_radian=True)
+        current_position = np.array(initial_pose[:3])
+        current_orientation = np.array(initial_pose[3:])
+        rot = R.from_euler('zyx', current_orientation)
+        quat = rot.as_quat()
+        print('curr quat', quat)
+        #print(initial_pose)
+        return current_position, current_orientation
+    
         
     def pose_ee(self):
         _, initial_pose = self.arm.get_position(is_radian=False)
@@ -119,25 +156,44 @@ class XarmEnv:
         #print(initial_pose)
         return current_position, current_orientation
 
-    def move_to_ee_pose(self,position,orietation):
+
+    def move_to_ee_pose(self,position,orietation,within_bounds = True):
         #ret = self.arm.set_servo_cartesian(np.concatenate((position, orietation)), is_radian=False, speed=1, wait=True)
-        ret = self.arm.set_position(x=position[0], y=position[1], z=position[2], roll=orietation[0], pitch=orietation[1], yaw=orietation[2], speed=200, is_radian=False, wait=True)
+        if is_position_in_range(position):
+            ret = self.arm.set_position(x=position[0], y=position[1], z=position[2], roll=orietation[0], pitch=orietation[1], yaw=orietation[2], speed=200, is_radian=False, wait=True)
+            return ret
+        else:
+            print(f"Target position {position} is out of range")#print(f"Return value from set_servo_cartesian: {ret}")
+            return None
+
+    def move_to_ee_pose_radian(self,position,orietation, is_quat=False):
+        #orietation = np.array([ 0.8509035, 0, 0, 0.525322 ])
+        if is_quat:
+            quat_ori = orietation
+            rot = R.from_quat(quat_ori)
+            orietation = rot.as_rotvec()
+            #print(orietation)
+        else:
+            orietation = R.from_euler('zyx', orietation)
+            orietation = orietation.as_rotvec()
+        #ret = self.arm.set_servo_cartesian(np.concatenate((position, orietation)), is_radian=False, speed=1, wait=True)
+        ret = self.arm.set_position(x=position[0], y=position[1], z=position[2], roll=orietation[0], pitch=orietation[1], yaw=orietation[2], speed=200, is_radian=True, wait=True)
         #print(f"Return value from set_servo_cartesian: {ret}")
-        return ret
+        return ret, orietation
     
 
     def robot_fingertip_pos_to_ee(self,position,quat_orietation):
 
-        HOME_QUAT = np.array([ -0.016411,    -0.37785,    0.92533,   -0.026844]) #[ 0.9367,  0.3474, -0.0088, -0.0433])
-        FINGERTIP_OFFSET = np.array([0, 0, -0.172]) 
-        home_euler = R.from_quat(HOME_QUAT).as_euler('zyx', degrees=True)
+        HOME_QUAT = np.array([ -0.0,    -0.0,    1.0,   -0.0]) #[ 0.9367,  0.3474, -0.0088, -0.0433])
+        FINGERTIP_OFFSET = np.array([0, 0, -15]) 
+        home_euler = R.from_quat(HOME_QUAT).as_euler('zyx')
 
-        ee_euler = R.from_quat(quat_orietation).as_euler('zyx', degrees=True)
+        ee_euler = R.from_quat(quat_orietation).as_euler('zyx')
 
         offset_euler = ee_euler - home_euler
 
-        fingertip_offset_euler = offset_euler * [1,-1,1]
-        fingertip_transf = R.from_euler('zyx', fingertip_offset_euler, degrees=True)
+        fingertip_offset_euler = offset_euler * [-1,1,1]
+        fingertip_transf = R.from_euler('zyx', fingertip_offset_euler)
         fingertip_offset = fingertip_transf.as_matrix() @ FINGERTIP_OFFSET
         #fingertip_offset[2] -= 0.9*FINGERTIP_OFFSET[2]
         fingertip_offset[2] -= FINGERTIP_OFFSET[2]
@@ -146,28 +202,12 @@ class XarmEnv:
         return ee_pos, ee_euler
     
     def move_to_fingertip_pose(self,position,quat_orietation):
-        quat_orietation=np.array([ -0.016411,    -0.37785,    0.92533,   -0.026844])
+        #quat_orietation=np.array([ 0.8509035, 0, 0, 0.525322 ])
         ee_pos, ee_euler = self.robot_fingertip_pos_to_ee(position,quat_orietation)
         
-        self.move_to_ee_pose(ee_pos, ee_euler)
+        self.move_to_ee_pose_radian(ee_pos, ee_euler)
+        return ee_euler
 
-def robot_ee_to_fingertip_pos(ee_pos, ee_quat):
-    HOME_QUAT = np.array([ -0.016411,    -0.37785,    0.92533,   -0.026844]) #[ 0.9367,  0.3474, -0.0088, -0.0433])
-    FINGERTIP_OFFSET = np.array([0, 0, -0.172]) 
-
-
-    home_euler = R.from_quat(HOME_QUAT).as_euler('zyx', degrees=True)
-    ee_euler = R.from_quat(ee_quat).as_euler('zyx', degrees=True)
-    offset_euler = ee_euler - home_euler
-    fingertip_offset_euler = offset_euler * [1,-1,1]
-
-    fingertip_transf = R.from_euler('zyx', fingertip_offset_euler, degrees=True)
-    fingertip_offset = fingertip_transf.as_matrix() @ FINGERTIP_OFFSET
-    #fingertip_offset[2] -= 0.9*FINGERTIP_OFFSET[2]
-    fingertip_offset[2] -= FINGERTIP_OFFSET[2]
-
-    fingertip_pos = np.array([ee_pos[0], ee_pos[1], ee_pos[2]]) + fingertip_offset
-    return fingertip_pos
 
 
 class MultiCam:
@@ -358,56 +398,8 @@ if __name__ == "__main__":
     #multi_cam.calibrate_cam()
 
     # Uncomment to take an image + merged point cloud
-    #multi_cam = MultiCam(['317422075456']) 
+    #multi_cam = MultiCam(['317422075456' , '317422074281']) 
     #rgb_images, depth_images, pcd_merged = multi_cam.take_rgbd()
     robot = XarmEnv()
-    from scipy.spatial.transform import Rotation 
-    '''
-    # Convert the desired orientation from Euler angles to a quaternion
-    desired_orientation_euler = [   90,     90,     90]
-    desired_orientation_quat = R.from_euler('zyx', desired_orientation_euler, degrees=True).as_quat()
-    ee_pos = robot_fingertip_pos_to_ee([      200,       210,     250], desired_orientation_quat)
-    robot.move_to_ee_pose(ee_pos, desired_orientation_quat)
-
-    desired_orientation_euler = [   90,     30,     90]
-    desired_orientation_quat = R.from_euler('zyx', desired_orientation_euler, degrees=True).as_quat()
-    ee_pos = robot_fingertip_pos_to_ee([      200,       210,     250], desired_orientation_quat)
-    robot.move_to_ee_pose(ee_pos, desired_orientation_euler)
-
-    desired_orientation_euler = [   90,     90,     30]
-    desired_orientation_quat = R.from_euler('zyx', desired_orientation_euler, degrees=True).as_quat()
-    ee_pos = robot_fingertip_pos_to_ee([      200,       210,     250], desired_orientation_quat)
-    robot.move_to_ee_pose(ee_pos, desired_orientation_euler)
-   
-    '''
-    '''def rotation_matrix_to_yaw_pitch_roll(R):
-        """
-        Convert a 3x3 rotation matrix to yaw, pitch, and roll angles (ZYX sequence).
-        """
-        yaw = np.arctan2(R[1, 0], R[0, 0])  # atan2(r21, r11)
-        pitch = np.arctan2(-R[2, 0], np.sqrt(R[2, 1]**2 + R[2, 2]**2))  # atan2(-r31, sqrt(r32^2 + r33^2))
-        roll = np.arctan2(R[2, 1], R[2, 2])  # atan2(r32, r33)
-        return np.array([yaw, pitch, roll])'''
-    
-    def transform_rotation_camera_to_robot_roll_yaw_pitch(TCR, rotation_cam = np.eye(3)):
-        r_cam = Rotation.from_matrix(rotation_cam)
-        q_cam = r_cam.as_quat()
-        r_tcr = Rotation.from_matrix(TCR[:3, :3])
-        q_tcr = r_tcr.as_quat()
-        q_rob = Rotation.from_quat(q_tcr) * Rotation.from_quat(q_cam)
-        euler_angles = q_rob.as_euler('zyx', degrees=True)
-        return np.array([euler_angles[2], euler_angles[1], euler_angles[0]])
-    
-    transforms = np.load('calib/transforms.npy', allow_pickle=True).item()
-    TRC = transforms['317422074281']['trc'][:3,:3]
-    TCR = transforms['317422074281']['tcr'][:3,:3]
-    print(TRC)
-    print(TCR)
-    yaw, pitch, roll = transform_rotation_camera_to_robot_roll_yaw_pitch(TRC)
-    print("Yaw (Z):", np.degrees(yaw))
-    print("Pitch (Y):", np.degrees(pitch))
-    print("Roll (X):", np.degrees(roll))
-    robot.move_to_ee_pose(
-
-                     [      300,       0,     250], [    roll,     pitch,     yaw],
-                )
+    robot.grasp(800)
+    robot.arm.set_gripper_position(800, wait=False)

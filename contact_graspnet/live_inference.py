@@ -66,24 +66,28 @@ def transform_rotation_camera_to_robot_roll_yaw_pitch(rotation_cam, TCR):
     """
     Transforms a rotation from camera frame to robot base frame and returns Roll-Yaw-Pitch.
     """
+    R = TCR[:3, :3] @ rotation_cam
     # Convert camera rotation to quaternion
-    r_cam = Rotation.from_matrix(rotation_cam)
-    q_cam = r_cam.as_quat()
+    #r_cam = Rotation.from_matrix(rotation_cam)
+    #q_cam = r_cam.as_quat()
 
     # Convert TCR rotation to quaternion
-    r_tcr = Rotation.from_matrix(TCR[:3, :3])
-    q_tcr = r_tcr.as_quat()
+    #r_tcr = Rotation.from_matrix(TCR[:3, :3])
+    #q_tcr = r_tcr.as_quat()
 
     # Multiply quaternions
-    q_rob = Rotation.from_quat(q_tcr).as_matrix() @ Rotation.from_quat(q_cam).as_matrix()
-    q_rob = Rotation.from_matrix(q_rob).as_quat()
+    #q_rob = Rotation.from_quat(q_tcr).as_matrix() @ Rotation.from_quat(q_cam).as_matrix()
+    #q_rob = Rotation.from_matrix(q_rob).as_quat()
 
     # Convert robot rotation to Roll-Yaw-Pitch (ZYX Euler angles)
     #r_rob = Rotation.from_quat(q_rob)
     #roll_yaw_pitch = r_rob.as_euler('zyx', degrees=True)
+    yaw = np.arctan2(R[1, 0], R[0, 0])  
+    pitch = np.arcsin(-R[2, 0]) 
+    roll = np.arctan2(R[2, 1], R[2, 2]) 
 
     #roll, yaw, pitch = roll_yaw_pitch[0], roll_yaw_pitch[1], roll_yaw_pitch[2]
-    return q_rob #r_rob# np.array([roll, yaw, pitch]) # Return as (roll, pitch, yaw)
+    return np.degrees(np.array([roll, pitch, yaw]))#q_rob #r_rob#  # Return as (roll, pitch, yaw)
 
 class RealsenseStreamer():
     def __init__(self, serial_no=None):
@@ -365,7 +369,7 @@ if __name__ == "__main__":
         t0 = time.time()
         #pred_grasps_cam, scores, contact_pts, _ = grasp_estimator.predict_scene_grasps(sess, pc_full, pc_segments=pc_segments, 
         #                                                                                  local_regions=local_regions, filter_grasps=filter_grasps, forward_passes=forward_passes)  
-        gaze = np.array([222, 282])
+        gaze = np.array([289, 301])
         print(realsense_img.shape)
         seg_model = FastSAM('./contact_graspnet/segment/FastSAM-s.pt')
         segmented_cam_img, _ = select_from_sam_everything( #Segments everything and merge masks that is closest to the point prompt
@@ -718,23 +722,26 @@ if __name__ == "__main__":
             time.sleep(1)
             float_buffer = vis.capture_screen_float_buffer()
             float_array = np.asarray(float_buffer)
+            
             image_array = (255.0 * float_array).astype(np.uint8)
             cv2.imwrite(f"grasp_lines{i}_1.png", cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR))
             
             ##############################################
             print("Moving to pose")
             position_cam = 1000.0*np.array(grasp[:3, 3])  # Extract translation
-            position_rob = np.array(transform(np.array(position_cam).reshape(1,3), TCR))[0]
+            position_rob = np.array((np.array(position_cam).reshape(1,3) @ TCR))[0]
             rotation_matrix = grasp[:3, :3]
             
             quat_orientation = transform_rotation_camera_to_robot_roll_yaw_pitch(rotation_matrix, TCR)
             print("Position: ", position_rob)
             print("Orientation: ", quat_orientation)
             positions.append(position_rob)
+
+            ret = robot.move_to_ee_pose(position_rob, quat_orientation)
+            #_, orientation = robot. move_to_ee_pose_radian(position_rob, quat_orientation, is_quat=True)
+            #orientation = robot.move_to_fingertip_pose(position_rob, quat_orientation)
+            orientations.append(quat_orientation)
             
-            orientation = robot.move_to_fingertip_pose(position_rob, quat_orientation)
-            orientations.append(orientation)
-            #robot.move_to_ee_pose(position_rob, orientation)
 
         #vis.clear_geometries()
         print("Getting image of all the coloured grippers")
