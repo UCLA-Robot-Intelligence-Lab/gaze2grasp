@@ -224,9 +224,9 @@ class GraspEstimator:
 
         if constant_offset:
             offset_pred = np.array([[self._contact_grasp_cfg['DATA']['gripper_width']-self._contact_grasp_cfg['TEST']['extra_opening']]*self._contact_grasp_cfg['DATA']['num_point']])
-        
+        print('extra opening n gripper width: ', self._contact_grasp_cfg['TEST']['extra_opening'], self._contact_grasp_cfg['DATA']['gripper_width'])
         gripper_openings = np.minimum(offset_pred + self._contact_grasp_cfg['TEST']['extra_opening'], self._contact_grasp_cfg['DATA']['gripper_width'])
-
+        #print("GRIPPER OPENING", gripper_openings)
         with_replacement = self._contact_grasp_cfg['TEST']['with_replacement'] if 'with_replacement' in self._contact_grasp_cfg['TEST'] else False
         
         selection_idcs = self.select_grasps(pred_points[:,:3], pred_scores, 
@@ -238,9 +238,12 @@ class GraspEstimator:
 
         if not np.any(selection_idcs):
             selection_idcs=np.array([], dtype=np.int32)
-
+        #print("CENTRE TO TIP", self._contact_grasp_cfg['TEST']['center_to_tip'])
+        
         if 'center_to_tip' in self._contact_grasp_cfg['TEST'] and self._contact_grasp_cfg['TEST']['center_to_tip']:
+            #print('pred_grasps_cam:', pred_grasps_cam)
             pred_grasps_cam[:,:3, 3] -= pred_grasps_cam[:,:3,2]*(self._contact_grasp_cfg['TEST']['center_to_tip']/2)
+            #print('pred_grasps_cam after centre to tip:', pred_grasps_cam)
         
         # convert back to opencv coordinates
         if convert_cam_coords:
@@ -248,7 +251,7 @@ class GraspEstimator:
             pred_points[:,:2] *= -1
 
         return pred_grasps_cam[selection_idcs], pred_scores[selection_idcs], pred_points[selection_idcs].squeeze(), gripper_openings[selection_idcs].squeeze()
-
+   
     def predict_scene_grasps(self, sess, pc_full, pc_segments={}, local_regions=False, filter_grasps=False, forward_passes=1):
         """
         Predict num_point grasps on a full point cloud or in local box regions around point cloud segments.
