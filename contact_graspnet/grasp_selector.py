@@ -177,7 +177,7 @@ def find_distinct_grasps(pred_grasps_cam, pred_gripper_openings, gaze, depth_fra
 
     if len(nearby_grasps) == 0:
         print("No grasps found within the specified distance.")
-        return None, None, None
+        return None, None
 
     # Cluster the nearby grasps using both position and orientation
     kmeans = KMeans(n_clusters=min(n_grasps, len(nearby_grasps)), random_state=0).fit(nearby_features)
