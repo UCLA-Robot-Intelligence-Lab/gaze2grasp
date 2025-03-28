@@ -135,7 +135,17 @@ class XarmEnv:
         #pos, orientation = (array([     475.73,      1.4586,       416.7]), array([     179.13,   -0.010084,     0.77567]))
 
 
-    def pose_ee_radian(self):
+    
+
+    def move_to_ee_pose(self,position,orietation,within_bounds = True):
+        #ret = self.arm.set_servo_cartesian(np.concatenate((position, orietation)), is_radian=False, speed=1, wait=True)
+        if is_position_in_range(position):
+            ret = self.arm.set_position(x=position[0], y=position[1], z=position[2], roll=orietation[0], pitch=orietation[1], yaw=orietation[2], speed=200, is_radian=False, wait=True)
+            return ret
+        else:
+            print(f"Target position {position} is out of range")#print(f"Return value from set_servo_cartesian: {ret}")
+            return None
+    '''def pose_ee_radian(self):
         _, initial_pose = self.arm.get_position(is_radian=True)
         current_position = np.array(initial_pose[:3])
         current_orientation = np.array(initial_pose[3:])
@@ -155,16 +165,6 @@ class XarmEnv:
         print('curr quat', quat)
         #print(initial_pose)
         return current_position, current_orientation
-
-
-    def move_to_ee_pose(self,position,orietation,within_bounds = True):
-        #ret = self.arm.set_servo_cartesian(np.concatenate((position, orietation)), is_radian=False, speed=1, wait=True)
-        if is_position_in_range(position):
-            ret = self.arm.set_position(x=position[0], y=position[1], z=position[2], roll=orietation[0], pitch=orietation[1], yaw=orietation[2], speed=200, is_radian=False, wait=True)
-            return ret
-        else:
-            print(f"Target position {position} is out of range")#print(f"Return value from set_servo_cartesian: {ret}")
-            return None
 
     def move_to_ee_pose_radian(self,position,orietation, is_quat=False):
         #orietation = np.array([ 0.8509035, 0, 0, 0.525322 ])
@@ -207,7 +207,7 @@ class XarmEnv:
         
         self.move_to_ee_pose_radian(ee_pos, ee_euler)
         return ee_euler
-
+        '''
 
 
 class MultiCam:
@@ -398,8 +398,6 @@ if __name__ == "__main__":
     #multi_cam.calibrate_cam()
 
     # Uncomment to take an image + merged point cloud
-    #multi_cam = MultiCam(['317422075456' , '317422074281']) 
-    #rgb_images, depth_images, pcd_merged = multi_cam.take_rgbd()
-    robot = XarmEnv()
-    robot.grasp(800)
-    robot.arm.set_gripper_position(800, wait=False)
+    multi_cam = MultiCam(['317422075456' , '317422074281']) 
+    rgb_images, depth_images, pcd_merged = multi_cam.take_rgbd()
+    

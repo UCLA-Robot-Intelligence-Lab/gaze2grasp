@@ -23,12 +23,11 @@ tf.disable_eager_execution()
 
 # Constants
 GRIPPER_SPEED, GRIPPER_FORCE, GRIPPER_MAX_WIDTH, GRIPPER_TOLERANCE = 0.1, 40, 0.08570, 0.01
-SERIAL_NO_81 = '317422074281'  # Camera serial number
-SERIAL_NO_56 = '317422075456'
+SERIAL_NO = '317422074281'  # Camera serial number
 # Load calibration data
 transforms = np.load('calib/transforms.npy', allow_pickle=True).item()
-TCR_81 = transforms[SERIAL_NO_81]['tcr']
-TCR_56 = transforms[SERIAL_NO_56]['tcr']
+TCR = transforms[SERIAL_NO]['tcr']
+TCR[:3, 3] /= 1000.0
 
 physical_devices = tf.config.experimental.list_physical_devices('GPU')
 print(f'GPUs: {physical_devices}')
@@ -102,10 +101,10 @@ class RealsenseStreamer():
                            [0, self.depth_intrin.fy, self.depth_intrin.ppy],
                            [0, 0, 1]])
 
-        #self.dec_filter = rs.decimation_filter()
-        #self.spat_filter = rs.spatial_filter()
-        #self.temp_filter = rs.temporal_filter()
-        #self.hole_filling_filter = rs.hole_filling_filter()
+        self.dec_filter = rs.decimation_filter()
+        self.spat_filter = rs.spatial_filter()
+        self.temp_filter = rs.temporal_filter()
+        self.hole_filling_filter = rs.hole_filling_filter()
         print("camera started")
 
     def deproject_pixel(self, px, depth_frame):
@@ -153,7 +152,7 @@ class RealsenseStreamer():
             point_3d = self.deproject_pixel((u_pixel, v_pixel), depth_frame)
             points_3d.append(np.array(point_3d))
         points_3d = np.array(points_3d).T
-        #print(points_3d.shape)
+        print(points_3d.shape)
         points_3d = np.vstack((points_3d, np.ones([1,points_3d.shape[1]])))
         points_3d = ((np.eye(4).dot(points_3d)).T)[:, 0:3]
         colors = cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB).reshape(points_3d.shape)/255.
@@ -167,37 +166,6 @@ class RealsenseStreamer():
         cv2.imshow('img', image)
         cv2.waitKey(0)
 
-class PixelSelector:
-    def __init__(self):
-        pass
-
-    def load_image(self, img, recrop=False):
-        self.img = img
-        if recrop:
-            cropped_img = self.crop_at_point(img, 700, 300, width=400, height=300)
-            self.img = cv2.resize(cropped_img, (640, 480))
-
-    def crop_at_point(self, img, x, y, width=640, height=480):
-        img = img[y:y+height, x:x+width]
-        return img
-
-    def mouse_callback(self, event, x, y, flags, param):
-        cv2.imshow("pixel_selector", self.img)
-        if event == cv2.EVENT_LBUTTONDBLCLK:
-            self.clicks.append([x, y])
-            cv2.circle(self.img, (x, y), 3, (255, 255, 0), -1)
-
-    def run(self, img):
-        self.load_image(img)
-        self.clicks = []
-        cv2.namedWindow('pixel_selector')
-        cv2.setMouseCallback('pixel_selector', self.mouse_callback)
-        while True:
-            k = cv2.waitKey(20) & 0xFF
-            if k == 27:
-                break
-        return self.clicks
-    
 # Gripper control points
 gripper_control_points = np.array([
     [0, 0, -0.2],  # Base point
@@ -322,7 +290,7 @@ def segment_image(realsense_img, gaze):
 
 # Function to predict grasps
 def predict_grasps(grasp_estimator, sess, depth_image, segmented_cam_img, K, TCR):
-    return grasp_estimator.predict_scene_grasps_from_depth_K_and_2d_seg(sess, depth_image, segmented_cam_img, K, TCR, local_regions=True, filter_grasps=True)
+    return grasp_estimator.predict_scene_grasps_from_depth_K_and_2d_seg(sess, depth_image, segmented_cam_img, K, TCR, local_regions=True, filter_grasps=False)
 
 def set_camera_view_and_save_image(vis, extrinsic_matrix, output_filename):
     view_control = vis.get_view_control()
@@ -377,8 +345,7 @@ if __name__ == "__main__":
     FLAGS = parser.parse_args()
 
     global_config = config_utils.load_config(FLAGS.ckpt_dir, batch_size=FLAGS.forward_passes, arg_configs=FLAGS.arg_configs)
-    realsense_streamer_81 = RealsenseStreamer(SERIAL_NO_81)
-    realsense_streamer_56 = RealsenseStreamer(SERIAL_NO_56)
+    realsense_streamer = RealsenseStreamer(SERIAL_NO)
 
     grasp_estimator = GraspEstimator(global_config)
     grasp_estimator.build_network()
@@ -387,19 +354,14 @@ if __name__ == "__main__":
     config.gpu_options.allow_growth = True
     config.allow_soft_placement = True
     sess = tf.Session(config=config)
-    #print(config)
-    #print(sess)
+    print(config)
+    print(sess)
     #print('Session created: ', sess.list_devices())
     grasp_estimator.load_weights(sess, saver, FLAGS.ckpt_dir, mode='test')
 
     while True:
-        streamers = [realsense_streamer_81, realsense_streamer_56]
-        results = [capture_and_process_rgbd(streamer) for streamer in streamers]
-        pcds, realsense_imgs, depth_frames, depth_images = zip(*results)
-        pcds, realsense_imgs, depth_frames, depth_images = np.array(pcds), np.array(realsense_imgs), np.array(depth_frames), np.array(depth_images)
-        pixel_selector = PixelSelector()
-        pixels = pixel_selector.run(realsense_imgs[0])
-        pixels.append(pixel_selector.run(realsense_imgs[1])[0])
+        pcd, realsense_img, depth_frame, depth_image = capture_and_process_rgbd(realsense_streamer)
+        gaze = np.array([411, 326])
 
         base_folder = "vlm_images"
         while True:
@@ -414,42 +376,36 @@ if __name__ == "__main__":
         print(f"Data will be saved in {full_save_folder}")
 
         os.makedirs('results', exist_ok=True)
-        cv2.namedWindow("Gaze Segmentation (Camera 81)", cv2.WINDOW_NORMAL)
-        cv2.resizeWindow("Gaze Segmentation (Camera 81)", 640, 480)
-        cv2.moveWindow("Gaze Segmentation (Camera 81)", 1800, 1050)
-        cv2.namedWindow("Gaze Segmentation (Camera 56)", cv2.WINDOW_NORMAL)
-        cv2.resizeWindow("Gaze Segmentation (Camera 56)", 640, 480)
-        cv2.moveWindow("Gaze Segmentation (Camera 56)", 1800, 500)
-        print('pixel_81:', pixels[0])
-        segmented_cam_imgs = [segment_image(realsense_imgs[0], np.array(pixels[0]))]
+        cv2.namedWindow("Gaze Segmentation (Camera)", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("Gaze Segmentation (Camera)", 640, 480)
+        cv2.moveWindow("Gaze Segmentation (Camera)", 1800, 1050)
+
+        segmented_cam_img = segment_image(realsense_img, gaze)
+        cv2.imshow("Gaze Segmentation (Camera)", segmented_cam_img.astype(np.uint8) * 255)
+        cv2.waitKey(0)
+
+        depth_image = depth_image / 1000
+        print(np.mean(depth_image))
+        pcd_numpy, pred_grasps_cam, _, _, pred_gripper_openings = predict_grasps(grasp_estimator, sess, depth_image, segmented_cam_img, realsense_streamer.K, TCR)
         
-        cv2.imshow("Gaze Segmentation (Camera 81)", segmented_cam_imgs[0].astype(np.uint8) * 255)
-        cv2.waitKey(0)
-        print('pixel_56:', pixels[1])
-        segmented_cam_imgs.append(segment_image(realsense_imgs[1], np.array(pixels[1])))
-        cv2.imshow("Gaze Segmentation (Camera 56)", segmented_cam_imgs[1].astype(np.uint8) * 255)
-        cv2.waitKey(0)
-
-
-        depth_images = np.array(depth_images) / 1000  # Convert list to array first
-        pcd, pred_grasps_cam, _, _, pred_gripper_openings = predict_grasps(grasp_estimator, sess, depth_images, np.array(segmented_cam_imgs), np.array([streamers[0].K, streamers[1].K]), np.array([TCR_81, TCR_56]))
-        print('Predicted grasps:', pred_grasps_cam[True].shape[0])
-        extrinsic_matrix = np.load(f"./calib/extrinsic_{SERIAL_NO_81}.npy")
-        extrinsic_matrix1 = np.load(f"./calib/extrinsic_{SERIAL_NO_56}.npy")
+        print('Predicted grasps:', pred_grasps_cam.items())
+        print('No. Predicted grasps:', pred_grasps_cam[True].shape[0])
+        extrinsic_matrix = np.load(f"./calib/extrinsic_{SERIAL_NO}.npy")
+        extrinsic_matrix1 = np.load(f"./calib/extrinsic_{SERIAL_NO}_1.npy")
         vis = o3d.visualization.Visualizer()
         vis.create_window()
         # Visualize all the predicted grasps
         visualize_gripper_with_cylinders(vis, pred_grasps_cam[True], pcd, connections, [[0, 0, 0] for _ in range(pred_grasps_cam[True].shape[0])])
-        #semantic_waypoint = streamers[0].deproject_pixel(pixels[0], depth_frames[0])
-        #sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
-        #sphere.translate(semantic_waypoint)
-        #sphere.paint_uniform_color([0,0,1])
-        #vis.add_geometry(sphere)
+        semantic_waypoint = realsense_streamer.deproject_pixel(gaze, depth_frame)
+        sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
+        sphere.translate(semantic_waypoint)
+        sphere.paint_uniform_color([0,0,1])
+        vis.add_geometry(sphere)
         set_camera_view_and_save_image(vis, extrinsic_matrix, os.path.join(full_save_folder, F"pred_grasp_lines_w_gaze.png"))  
         
         # Select the options for VLM
-        distinct_grasps, distinct_openings = find_distinct_grasps(pred_grasps_cam, pred_gripper_openings, pixels[0], depth_frames[0], streamers[0], n_grasps=3, max_distance=0.2)
-        closest_grasps, closest_opening = find_closest_grasp(pred_grasps_cam, pred_gripper_openings, pixels[0], depth_frames[0], streamers[0])
+        distinct_grasps, distinct_openings = find_distinct_grasps(pred_grasps_cam, pred_gripper_openings, gaze, depth_frame, realsense_streamer, n_grasps=3, max_distance=0.2)
+        closest_grasps, closest_opening = find_closest_grasp(pred_grasps_cam, pred_gripper_openings, gaze, depth_frame, realsense_streamer)
         grasps = distinct_grasps
         openings = distinct_openings
         grasps.append(closest_grasps)
