@@ -131,7 +131,7 @@ class GraspEstimator:
             
         return filtered_grasp_idcs
 
-    def extract_3d_cam_boxes(self, full_pc, pc_segments, min_size=0.3, max_size=2.0):
+    def extract_3d_cam_boxes(self, full_pc, pc_segments, min_size=0.1, max_size=0.3):
         """
         Extract 3D bounding boxes around the pc_segments for inference to create 
         dense and zoomed-in predictions but still take context into account.
@@ -226,7 +226,7 @@ class GraspEstimator:
 
         if constant_offset:
             offset_pred = np.array([[self._contact_grasp_cfg['DATA']['gripper_width']-self._contact_grasp_cfg['TEST']['extra_opening']]*self._contact_grasp_cfg['DATA']['num_point']])
-        print('extra opening n gripper width: ', self._contact_grasp_cfg['TEST']['extra_opening'], self._contact_grasp_cfg['DATA']['gripper_width'])
+        #print('extra opening n gripper width: ', self._contact_grasp_cfg['TEST']['extra_opening'], self._contact_grasp_cfg['DATA']['gripper_width'])
         gripper_openings = np.minimum(offset_pred + self._contact_grasp_cfg['TEST']['extra_opening'], self._contact_grasp_cfg['DATA']['gripper_width'])
         #print("GRIPPER OPENING", gripper_openings)
         with_replacement = self._contact_grasp_cfg['TEST']['with_replacement'] if 'with_replacement' in self._contact_grasp_cfg['TEST'] else False
@@ -373,7 +373,7 @@ class GraspEstimator:
             selection_idcs = np.union1d(conf_idcs_greater_than[center_indexes], remaining_idcs[remaining_conf_idcs_greater_than])
         return selection_idcs
 
-    def extract_point_clouds(self, depth, K, segmap=None, rgb=None, z_range=[0.2,1.8], segmap_id=0, skip_border_objects=False, margin_px=5):
+    def extract_point_clouds(self, depth, K, segmap=None, rgb=None, z_range=[0.2,0.8], segmap_id=0, skip_border_objects=False, margin_px=5):
         """
         Converts depth map + intrinsics to point cloud. 
         If segmap is given, also returns segmented point clouds. If rgb is given, also returns pc_colors.
@@ -419,32 +419,49 @@ class GraspEstimator:
                         continue
 
                 inst_mask = segmap == i
-                #print(f"Instance {i} mask sum:", np.sum(inst_mask))  # Debugging print
+                #print(f"Instance {i} mask sum:", np.sum(inst_mask))
+                #print("Inst mask:", inst_mask)
+                #print("Inst mask dtype:", inst_mask.dtype)
 
                 pc_segment, _ = depth2pc(depth * inst_mask, K)
-                #print(f"Instance {i} point cloud shape before filtering:", pc_segment.shape)  # Debugging print
-
-                #pc_segment = pc_segment[(pc_segment[:, 2] < z_range[1]) & (pc_segment[:, 2] > z_range[0])]
+                #print(f"Instance {i} point cloud shape before filtering:", pc_segment.shape)
+                #print(f"Instance {i} point cloud dtype:", pc_segment.dtype)
+                #print(f"pc_segment:", pc_segment)
+                pc_segment = pc_segment[(pc_segment[:, 2] < z_range[1]) & (pc_segment[:, 2] > z_range[0])]
                 #print(f"Instance {i} point cloud shape after filtering:", pc_segment.shape)  # Debugging print
 
                 pc_segments[i] = pc_segment
 
         return pc_full, pc_segments, pc_colors
             
-    def predict_scene_grasps_from_depth_K_and_2d_seg(self, sess, depth, segmap, K, TCR, z_range=[0.2,1.8], local_regions=False, filter_grasps=False, segmap_id=0, skip_border_objects=False, margin_px=5, rgb=None, forward_passes=1):
+    def predict_scene_grasps_from_depth_K_and_2d_seg(self, sess, depth, segmap, K, TCR, z_range=[0.2,0.8], local_regions=False, filter_grasps=False, segmap_id=0, skip_border_objects=False, margin_px=5, rgb=None, forward_passes=1):
         """ Combines converting to point cloud(s) and predicting scene grasps into one function """
         if len(depth.shape) == 2 and len(segmap.shape) == 2 and len(K.shape) == 2 and len(TCR.shape) == 2:
             pc_full, pc_segments, _  = self.extract_point_clouds(depth, K, segmap=segmap, segmap_id=segmap_id, skip_border_objects=skip_border_objects, margin_px=margin_px, z_range=z_range, rgb=rgb)
             print(np.array(pc_full).shape)
-            print(np.array(pc_segments).shape)
+            print(np.array(pc_segments[True]).shape)
 
-            points_3d_homog = np.vstack((np.array(pc_full).T, np.ones((1, np.array(pc_full).shape[0]))))  # Shape: (4, N)
-            points_3d_transformed = (TCR @ points_3d_homog).T
-            #pc_segments_homg = np.vstack((np.array(pc_segments).T, np.ones((1, np.array(pc_segments).shape[0]))))  # Shape: (4, N)
-            #pc_segments_transformed = (TCR @ pc_segments_homg).T
-            pred_grasps_cam, scores, contact_pts, processing_data = self.predict_scene_grasps(sess, points_3d_transformed, pc_segments, local_regions=local_regions, filter_grasps=filter_grasps, forward_passes=forward_passes)
+            #points_3d_homog = np.vstack((np.array(pc_full).T, np.ones((1, np.array(pc_full).shape[0]))))  # Shape: (4, N)
+            #points_3d_transformed = (TCR @ points_3d_homog).T
+            pc_segments_homg = np.vstack((np.array(pc_segments[True]).T, np.ones((1, np.array(pc_segments[True]).shape[0]))))  # Shape: (4, N)
+            pc_segments[True] = (TCR @ pc_segments_homg).T
+            pred_grasps_cam, scores, contact_pts, processing_data = self.predict_scene_grasps(sess, pc_full, pc_segments, local_regions=local_regions, filter_grasps=filter_grasps, forward_passes=forward_passes)
             pcd = o3d.geometry.PointCloud()
-            pcd.points = o3d.utility.Vector3dVector(points_3d_transformed)
+            pcd.points = o3d.utility.Vector3dVector(pc_full)
+            #R = TCR[:3, :3]  # Extract rotation
+            #t = TCR[:3, 3]   # Extract translation
+            #R = TCR[:3, :3]  # 3x3 rotation
+            #t = TCR[:3, 3]   # 3x1 translation
+
+            #R_inv = R.T      # Rotation inverse (transpose)
+            #t_inv = -R_inv @ t  # Translation inverse
+
+            #for grasp in pred_grasps_cam[True]:
+                # Apply inverse rotation and translation (optimized)
+            #    grasp[:3, 3] = R_inv @ grasp[:3, 3] + t_inv  # p = R⁻¹ p' + t_inv
+                
+                # Apply inverse rotation to orientation
+            #    grasp[:3, :3] = R_inv @ grasp[:3, :3]
             return pcd, pred_grasps_cam, scores, contact_pts, processing_data
         elif len(depth.shape) == 3 and len(segmap.shape) == 3 and len(K.shape) == 3 and len(TCR.shape) == 3:
             print("MERGING POINT CLOUDS FOR CONTACT_GRASPNET_PRED")

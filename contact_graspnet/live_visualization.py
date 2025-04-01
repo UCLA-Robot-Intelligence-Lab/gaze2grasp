@@ -459,7 +459,7 @@ if __name__ == "__main__":
         print(openings)
 
         # Visualizing single grasps
-        base_link_color = [[1, 0.5, 1], [0.5, 1, 1], [1, 1, 0.5], [1, 0.5, 0]]
+        base_link_color = [[1, 0.6, 0.8], [0.4, 0, 0.8], [1, 0.5, 0], [1, 1, 0]]
         positions, orientations = [], []
         for i, grasp in enumerate(grasps):
             process_grasp(grasp, full_save_folder, i, base_link_color)
