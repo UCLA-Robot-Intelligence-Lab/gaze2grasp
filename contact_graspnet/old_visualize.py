@@ -310,10 +310,11 @@ def set_camera_view_and_save_image(vis, extrinsic_matrix, output_filename):
 
 def process_grasp(grasp, save_folder, i, base_link_color):
     # Visualize and save gripper with cylinders
-    if i != int:
+    if type(i) != int:
         color = base_link_color
     else:
         color = base_link_color[i]
+    #print('color', color)
     visualize_gripper_with_cylinders(vis, grasp, pcd, connections, color)
     set_camera_view_and_save_image(vis, extrinsic_matrix, os.path.join(save_folder, f"grasp_lines{i}a.png"))
     set_camera_view_and_save_image(vis, extrinsic_matrix1, os.path.join(save_folder, f"grasp_lines{i}b.png"))
@@ -361,7 +362,7 @@ if __name__ == "__main__":
 
     while True:
         pcd, realsense_img, depth_frame, depth_image = capture_and_process_rgbd(realsense_streamer)
-        gaze = np.array([411, 326])
+        gaze = np.array([351, 278])
 
         base_folder = "vlm_images"
         while True:
@@ -388,7 +389,7 @@ if __name__ == "__main__":
         print(np.mean(depth_image))
         pcd_numpy, pred_grasps_cam, _, _, pred_gripper_openings = predict_grasps(grasp_estimator, sess, depth_image, segmented_cam_img, realsense_streamer.K, TCR)
         
-        print('Predicted grasps:', pred_grasps_cam.items())
+        #print('Predicted grasps:', pred_grasps_cam.items())
         print('No. Predicted grasps:', pred_grasps_cam[True].shape[0])
         extrinsic_matrix = np.load(f"./calib/extrinsic_{SERIAL_NO}.npy")
         extrinsic_matrix1 = np.load(f"./calib/extrinsic_{SERIAL_NO}_1.npy")
@@ -402,24 +403,35 @@ if __name__ == "__main__":
         sphere.paint_uniform_color([0,0,1])
         vis.add_geometry(sphere)
         set_camera_view_and_save_image(vis, extrinsic_matrix, os.path.join(full_save_folder, F"pred_grasp_lines_w_gaze.png"))  
-        
+        vis.run()
         # Select the options for VLM
-        distinct_grasps, distinct_openings = find_distinct_grasps(pred_grasps_cam, pred_gripper_openings, gaze, depth_frame, realsense_streamer, n_grasps=3, max_distance=0.2)
-        closest_grasps, closest_opening = find_closest_grasp(pred_grasps_cam, pred_gripper_openings, gaze, depth_frame, realsense_streamer)
-        grasps = distinct_grasps
-        openings = distinct_openings
-        grasps.append(closest_grasps)
-        openings.append(closest_opening)
-        grasps = np.array(grasps)
-        openings = np.array(openings)*1000
-        print(openings)
+        if pred_grasps_cam[True].shape[0] > 4:
+            distinct_grasps, distinct_openings = find_distinct_grasps(pred_grasps_cam, pred_gripper_openings, gaze, depth_frame, realsense_streamer, n_grasps=3, max_distance=0.2)
+            closest_grasps, closest_opening = find_closest_grasp(pred_grasps_cam, pred_gripper_openings, gaze, depth_frame, realsense_streamer)
+            grasps = distinct_grasps
+            openings = distinct_openings
+            grasps.append(closest_grasps)
+            openings.append(closest_opening)
+            grasps = np.array(grasps)
+            openings = np.array(openings)*1000
+            print('openings:', openings)
+        elif pred_grasps_cam[True].shape[0] == 4:
+            grasps = pred_grasps_cam[True]
+            openings = pred_gripper_openings[True]
+            grasps = np.array(grasps)
+            openings = np.array(openings)*1000
+            print('openings:', openings)
+        else:
+            print("Insufficient grasp predictions...Exiting")
+            break
 
         # Visualizing single grasps
-        base_link_color = [[1, 0.5, 1], [0.5, 1, 1], [1, 1, 0.5], [1, 0.5, 0]]
+        base_link_color =[[1, 0.6, 0.8], [0.4, 0, 0.8], [1, 0.5, 0], [1, 1, 0]]
         positions, orientations = [], []
         for i, grasp in enumerate(grasps):
+            #print('Loop: ', i)
             process_grasp(grasp, full_save_folder, i, base_link_color)
-
+            '''
             # Move robot to the grasp pose
             print("Moving to pose")
             robot.grasp(None)
@@ -438,14 +450,14 @@ if __name__ == "__main__":
             orientations.append([roll, pitch, yaw])
             robot.move_to_ee_pose(position_ee, [roll, pitch, yaw])
             robot.grasp(openings[i])
-            
+            '''
 
         # Visualizing all grasps
         process_grasp(grasps, full_save_folder, '_all_', base_link_color)
 
         # Saving all the data
         data = np.array(list(zip(grasps, positions, orientations)), dtype=object)
-        np.save("grasp_data.npy", data)
+        np.save(os.path.join(full_save_folder, "grasp_data.npy"), data)
         
         vis.destroy_window()
 
