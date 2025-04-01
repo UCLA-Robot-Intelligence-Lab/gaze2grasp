@@ -443,8 +443,8 @@ class GraspEstimator:
 
             #points_3d_homog = np.vstack((np.array(pc_full).T, np.ones((1, np.array(pc_full).shape[0]))))  # Shape: (4, N)
             #points_3d_transformed = (TCR @ points_3d_homog).T
-            pc_segments_homg = np.vstack((np.array(pc_segments[True]).T, np.ones((1, np.array(pc_segments[True]).shape[0]))))  # Shape: (4, N)
-            pc_segments[True] = (TCR @ pc_segments_homg).T
+            #pc_segments_homg = np.vstack((np.array(pc_segments[True]).T, np.ones((1, np.array(pc_segments[True]).shape[0]))))  # Shape: (4, N)
+            #pc_segments[True] = (TCR @ pc_segments_homg).T
             pred_grasps_cam, scores, contact_pts, processing_data = self.predict_scene_grasps(sess, pc_full, pc_segments, local_regions=local_regions, filter_grasps=filter_grasps, forward_passes=forward_passes)
             pcd = o3d.geometry.PointCloud()
             pcd.points = o3d.utility.Vector3dVector(pc_full)

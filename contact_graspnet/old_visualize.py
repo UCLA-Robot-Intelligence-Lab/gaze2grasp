@@ -27,7 +27,7 @@ SERIAL_NO = '317422074281'  # Camera serial number
 # Load calibration data
 transforms = np.load('calib/transforms.npy', allow_pickle=True).item()
 TCR = transforms[SERIAL_NO]['tcr']
-TCR[:3, 3] /= 1000.0
+#TCR[:3, 3] /= 1000.0
 
 physical_devices = tf.config.experimental.list_physical_devices('GPU')
 print(f'GPUs: {physical_devices}')
@@ -290,7 +290,7 @@ def segment_image(realsense_img, gaze):
 
 # Function to predict grasps
 def predict_grasps(grasp_estimator, sess, depth_image, segmented_cam_img, K, TCR):
-    return grasp_estimator.predict_scene_grasps_from_depth_K_and_2d_seg(sess, depth_image, segmented_cam_img, K, TCR, local_regions=True, filter_grasps=False)
+    return grasp_estimator.predict_scene_grasps_from_depth_K_and_2d_seg(sess, depth_image, segmented_cam_img, K, TCR, local_regions=True, filter_grasps=True)
 
 def set_camera_view_and_save_image(vis, extrinsic_matrix, output_filename):
     view_control = vis.get_view_control()
@@ -431,17 +431,17 @@ if __name__ == "__main__":
         for i, grasp in enumerate(grasps):
             #print('Loop: ', i)
             process_grasp(grasp, full_save_folder, i, base_link_color)
-            '''
+            
             # Move robot to the grasp pose
             print("Moving to pose")
             robot.grasp(None)
             robot.go_home()
-            #position_fingertip = TCR[:3, :3] @ (1000.0 * grasp[:3, 3]) + TCR[:3, 3]
-            #rotation_matrix_rob = TCR[:3, :3] @ grasp[:3, :3]
-            position_fingertip = grasp[:3, 3]
-            rotation_matrix_rob = grasp[:3, :3]
+            position_fingertip = TCR[:3, :3] @ (1000.0 * grasp[:3, 3]) + TCR[:3, 3]
+            rotation_matrix_rob = TCR[:3, :3] @ grasp[:3, :3]
+            #position_fingertip = grasp[:3, 3]
+            #rotation_matrix_rob = grasp[:3, :3]
             approach_dir_base = rotation_matrix_rob[:, 2]
-            position_ee = position_fingertip + 90.0 * approach_dir_base
+            position_ee = position_fingertip #+ 90.0 * approach_dir_base
             rot = Rotation.from_matrix(rotation_matrix_rob)
             [yaw, pitch, roll] = rot.as_euler('ZYX', degrees=True)
             print("Adjusted Position (EE Frame): ", position_ee)
@@ -450,7 +450,7 @@ if __name__ == "__main__":
             orientations.append([roll, pitch, yaw])
             robot.move_to_ee_pose(position_ee, [roll, pitch, yaw])
             robot.grasp(openings[i])
-            '''
+
 
         # Visualizing all grasps
         process_grasp(grasps, full_save_folder, '_all_', base_link_color)
