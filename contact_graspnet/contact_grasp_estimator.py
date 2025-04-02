@@ -131,7 +131,7 @@ class GraspEstimator:
             
         return filtered_grasp_idcs
 
-    def extract_3d_cam_boxes(self, full_pc, pc_segments, min_size=0.1, max_size=0.3):
+    def extract_3d_cam_boxes_original(self, full_pc, pc_segments, min_size=0.1, max_size=0.25):
         """
         Extract 3D bounding boxes around the pc_segments for inference to create 
         dense and zoomed-in predictions but still take context into account.
@@ -164,19 +164,19 @@ class GraspEstimator:
 
                 # cube size is between min_size and max_size depending on object extents
                 size = np.minimum(np.maximum(np.max(obj_extent) * 2, min_size), max_size)
-                #print(f"Extracted Region Cube Size for object {i}:", size)
+                print(f"Extracted Region Cube Size for object {i}:", size)
 
                 # Debugging: Print the filtering condition
                 lower_bound = obj_center - size / 2
                 upper_bound = obj_center + size / 2
-                #print(f"Lower bound for object {i}:", lower_bound)
-                #print(f"Upper bound for object {i}:", upper_bound)
+                print(f"Lower bound for object {i}:", lower_bound)
+                print(f"Upper bound for object {i}:", upper_bound)
 
                 # Filter full_pc to get points within the bounding box
-                #condition = np.all(full_pc > lower_bound, axis=1) & np.all(full_pc < upper_bound, axis=1)
-                #print(f"Number of points in full_pc satisfying condition for object {i}:", np.sum(condition))
+                condition = np.all(full_pc > lower_bound, axis=1) & np.all(full_pc < upper_bound, axis=1)
+                print(f"Number of points in full_pc satisfying condition for object {i}:", np.sum(condition))
 
-                #partial_pc = full_pc[condition]
+                partial_pc = full_pc[condition]
                 partial_pc = full_pc
 
                 if np.any(partial_pc):
@@ -191,6 +191,67 @@ class GraspEstimator:
 
         return pc_regions, obj_centers
 
+    def extract_3d_cam_boxes(self, full_pc, pc_segments, min_size=0.1, max_size=0.3):
+        """
+        Extract 3D bounding boxes around the pc_segments and visualize them.
+
+        :param full_pc: Nx3 scene point cloud
+        :param pc_segments: Dictionary of segmented point clouds
+        :param min_size: minimum side length of the 3D bounding box
+        :param max_size: maximum side length of the 3D bounding box
+        :returns: (pc_regions, obj_centers) Point cloud box regions and their centers
+        """
+
+        pc_regions = {}
+        obj_centers = {}
+        geometries = []  # List to hold all geometries for visualization
+
+        # Convert full_pc to Open3D PointCloud for visualization
+        full_pcd = o3d.geometry.PointCloud()
+        full_pcd.points = o3d.utility.Vector3dVector(full_pc)
+        geometries.append(full_pcd)
+
+        for i in pc_segments:
+            if np.any(pc_segments[i]):
+                max_bounds = np.max(pc_segments[i][:, :3], axis=0)
+                min_bounds = np.min(pc_segments[i][:, :3], axis=0)
+
+                obj_extent = max_bounds - min_bounds
+                obj_center = min_bounds + obj_extent / 2
+
+                size = np.minimum(np.maximum(np.max(obj_extent) * 2, min_size), max_size)
+                print(f"Extracted Region Cube Size for object {i}:", size)
+
+                lower_bound = obj_center - size / 2
+                upper_bound = obj_center + size / 2
+                print(f"Lower bound for object {i}:", lower_bound)
+                print(f"Upper bound for object {i}:", upper_bound)
+
+                condition = np.all(full_pc > lower_bound, axis=1) & np.all(full_pc < upper_bound, axis=1)
+                print(f"Number of points in full_pc satisfying condition for object {i}:", np.sum(condition))
+
+                partial_pc = full_pc[condition]
+                #partial_pc = full_pc
+
+                if np.any(partial_pc):
+                    partial_pc = regularize_pc_point_count(partial_pc, self._contact_grasp_cfg['DATA']['raw_num_points'], use_farthest_point=self._contact_grasp_cfg['DATA']['use_farthest_point'])
+                    pc_regions[i] = partial_pc
+                    obj_centers[i] = obj_center
+
+                    # Create and add bounding box to visualization
+                    box = o3d.geometry.AxisAlignedBoundingBox(min_bound=lower_bound, max_bound=upper_bound)
+                    box.color = (1, 0, 0)  # Red box
+                    geometries.append(box)
+
+                else:
+                    print(f"No points in full_pc satisfy the condition for object {i}")
+            else:
+                print(f"pc_segments[{i}] is empty")
+
+        # Visualize all geometries (point cloud and boxes)
+        o3d.visualization.draw_geometries(geometries)
+
+        return pc_regions, obj_centers
 
     def predict_grasps(self, sess, pc, constant_offset=False, convert_cam_coords=True, forward_passes=1):
         """
@@ -274,31 +335,20 @@ class GraspEstimator:
 
         pred_grasps_cam, scores, contact_pts, gripper_openings = {}, {}, {}, {}
 
-        with tf.device('/GPU:0'):  
-            # Predict grasps in local regions or full pc
-            if local_regions:
-                #print("PC INTO PREDICT_SCENE_GRASPS: ", pc_full)
-                pc_regions, _ = self.extract_3d_cam_boxes(pc_full, pc_segments)
-                ''' #The pc_regions into the predict_grasps looks right... but when trying to parse the pc_full directly, there is also a problem
-                pcd = o3d.geometry.PointCloud()
-                pcd.points = o3d.utility.Vector3dVector(pc_regions[True])
-                o3d.visualization.draw_geometries([pcd])
-                
-                pc_full = regularize_pc_point_count(pc_full, self._contact_grasp_cfg['DATA']['raw_num_points'])
+        # Predict grasps in local regions or full pc
+        if local_regions:
+            pc_regions, _ = self.extract_3d_cam_boxes(pc_full, pc_segments)
 
-                pred_grasps_cam[-1], scores[-1], contact_pts[-1], gripper_openings[-1] = self.predict_grasps(sess, pc_full, convert_cam_coords=True, forward_passes=forward_passes)
-'''
-                for k, pc_region in pc_regions.items():
-                    #print((pc_region))
-                    pred_grasps_cam[k], scores[k], contact_pts[k], gripper_openings[k] = self.predict_grasps(sess, pc_region, convert_cam_coords=True, forward_passes=forward_passes)
-                print('Generated {} grasps in local regions'.format(len(pred_grasps_cam[True])))
+            for k, pc_region in pc_regions.items():
+                pred_grasps_cam[k], scores[k], contact_pts[k], gripper_openings[k] = self.predict_grasps(sess, pc_region, convert_cam_coords=False, forward_passes=forward_passes)
+            print('Generated {} grasps in local_regions'.format(len(pred_grasps_cam[True])))
 
-            else:
-                print('local_regions is False. Regularizing pc_full to {} points'.format(self._contact_grasp_cfg['DATA']['raw_num_points']))
-                pc_full = regularize_pc_point_count(pc_full, self._contact_grasp_cfg['DATA']['raw_num_points'])
-                print('Predicting grasps on full scene point cloud...')
-                pred_grasps_cam[-1], scores[-1], contact_pts[-1], gripper_openings[-1] = self.predict_grasps(sess, pc_full, convert_cam_coords=True, forward_passes=forward_passes)
-                print('Generated {} grasps'.format(len(pred_grasps_cam[-1])))
+        else:
+            print('local_regions is False. Regularizing pc_full to {} points'.format(self._contact_grasp_cfg['DATA']['raw_num_points']))
+            pc_full = regularize_pc_point_count(pc_full, self._contact_grasp_cfg['DATA']['raw_num_points'])
+            print('Predicting grasps on full scene point cloud...')
+            pred_grasps_cam[-1], scores[-1], contact_pts[-1], gripper_openings[-1] = self.predict_grasps(sess, pc_full, convert_cam_coords=True, forward_passes=forward_passes)
+            print('Generated {} grasps'.format(len(pred_grasps_cam[-1])))
 
         # Filter grasp contacts to lie within object segment
         if filter_grasps:
@@ -373,7 +423,7 @@ class GraspEstimator:
             selection_idcs = np.union1d(conf_idcs_greater_than[center_indexes], remaining_idcs[remaining_conf_idcs_greater_than])
         return selection_idcs
 
-    def extract_point_clouds(self, depth, K, segmap=None, rgb=None, z_range=[0.2,0.8], segmap_id=0, skip_border_objects=False, margin_px=5):
+    def extract_point_clouds(self, depth, K, segmap=None, rgb=None, z_range=[0.2,1.3], segmap_id=0, skip_border_objects=False, margin_px=5):
         """
         Converts depth map + intrinsics to point cloud. 
         If segmap is given, also returns segmented point clouds. If rgb is given, also returns pc_colors.
@@ -403,7 +453,7 @@ class GraspEstimator:
         # Threshold distance
         if pc_colors is not None:
             pc_colors = pc_colors[(pc_full[:, 2] < z_range[1]) & (pc_full[:, 2] > z_range[0])] 
-        #pc_full = pc_full[(pc_full[:, 2] < z_range[1]) & (pc_full[:, 2] > z_range[0])]
+        pc_full = pc_full[(pc_full[:, 2] < z_range[1]) & (pc_full[:, 2] > z_range[0])]
             
         # Extract instance point clouds from segmap and depth map
         pc_segments = {}
@@ -434,20 +484,26 @@ class GraspEstimator:
 
         return pc_full, pc_segments, pc_colors
             
-    def predict_scene_grasps_from_depth_K_and_2d_seg(self, sess, depth, segmap, K, TCR, z_range=[0.2,0.8], local_regions=False, filter_grasps=False, segmap_id=0, skip_border_objects=False, margin_px=5, rgb=None, forward_passes=1):
+    def predict_scene_grasps_from_depth_K_and_2d_seg(self, sess, depth, segmap, K, TCR, z_range=[0.2,1.3], local_regions=False, filter_grasps=False, segmap_id=0, skip_border_objects=False, margin_px=5, rgb=None, forward_passes=1):
         """ Combines converting to point cloud(s) and predicting scene grasps into one function """
         if len(depth.shape) == 2 and len(segmap.shape) == 2 and len(K.shape) == 2 and len(TCR.shape) == 2:
-            pc_full, pc_segments, _  = self.extract_point_clouds(depth, K, segmap=segmap, segmap_id=segmap_id, skip_border_objects=skip_border_objects, margin_px=margin_px, z_range=z_range, rgb=rgb)
-            print(np.array(pc_full).shape)
-            print(np.array(pc_segments[True]).shape)
+            #print(depth.shape)
+            ##print(K.shape)
+            #print(rgb.shape)
+            #print(segmap.shape)
+            pc_full, pc_segments, pc_color  = self.extract_point_clouds(depth, K, segmap=segmap, segmap_id=segmap_id, skip_border_objects=skip_border_objects, margin_px=margin_px, z_range=z_range, rgb=rgb[:, :, ::-1])
+            #print(np.array(pc_full).shape)
+            #print(np.array(pc_color).shape)
+            #print(np.array(pc_segments[True]).shape)
 
-            #points_3d_homog = np.vstack((np.array(pc_full).T, np.ones((1, np.array(pc_full).shape[0]))))  # Shape: (4, N)
-            #points_3d_transformed = (TCR @ points_3d_homog).T
-            #pc_segments_homg = np.vstack((np.array(pc_segments[True]).T, np.ones((1, np.array(pc_segments[True]).shape[0]))))  # Shape: (4, N)
-            #pc_segments[True] = (TCR @ pc_segments_homg).T
-            pred_grasps_cam, scores, contact_pts, processing_data = self.predict_scene_grasps(sess, pc_full, pc_segments, local_regions=local_regions, filter_grasps=filter_grasps, forward_passes=forward_passes)
+            points_3d_homog = np.vstack((np.array(pc_full).T, np.ones((1, np.array(pc_full).shape[0]))))  # Shape: (4, N)
+            points_3d_transformed = (TCR @ points_3d_homog).T
+            pc_segments_homg = np.vstack((np.array(pc_segments[True]).T, np.ones((1, np.array(pc_segments[True]).shape[0]))))  # Shape: (4, N)
+            pc_segments[True] = (TCR @ pc_segments_homg).T
+            pred_grasps_cam, scores, contact_pts, processing_data = self.predict_scene_grasps(sess, points_3d_transformed, pc_segments, local_regions=local_regions, filter_grasps=filter_grasps, forward_passes=forward_passes)
             pcd = o3d.geometry.PointCloud()
-            pcd.points = o3d.utility.Vector3dVector(pc_full)
+            pcd.points = o3d.utility.Vector3dVector(points_3d_transformed)
+            pcd.colors = o3d.utility.Vector3dVector(pc_color/255)
             #R = TCR[:3, :3]  # Extract rotation
             #t = TCR[:3, 3]   # Extract translation
             #R = TCR[:3, :3]  # 3x3 rotation
@@ -465,26 +521,42 @@ class GraspEstimator:
             return pcd, pred_grasps_cam, scores, contact_pts, processing_data
         elif len(depth.shape) == 3 and len(segmap.shape) == 3 and len(K.shape) == 3 and len(TCR.shape) == 3:
             print("MERGING POINT CLOUDS FOR CONTACT_GRASPNET_PRED")
-            merged_points, merged_segments = [], []
+            merged_segments, pcds= {}, []
             for i in range(K.shape[0]):
-                pc_full, pc_segments, _  = self.extract_point_clouds(depth[i], K[i], segmap=segmap[i], segmap_id=segmap_id, skip_border_objects=skip_border_objects, margin_px=margin_px, z_range=z_range, rgb=rgb)
+                #print(depth[i].shape)
+                #print(K[i].shape)
+                #print(rgb[i].shape)
+                #print(segmap[i].shape)
+                pc_full, pc_segments, pc_color  = self.extract_point_clouds(depth[i], K[i], segmap=segmap[i], segmap_id=segmap_id, skip_border_objects=skip_border_objects, margin_px=margin_px, z_range=z_range, rgb=rgb[i][:, :, ::-1])
                 
                 print(np.array(pc_full).shape)
-                print(np.array(pc_segments).shape)
+                print(np.array(pc_color).shape)            
+                print(np.array(pc_segments[True]).shape)
+
 
                 points_3d_homog = np.vstack((np.array(pc_full).T, np.ones((1, np.array(pc_full).shape[0]))))  # Shape: (4, N)
                 points_3d_transformed = (TCR[i] @ points_3d_homog).T
-                pc_segments_homg = np.vstack((np.array(pc_segments).T, np.ones((1, np.array(pc_segments).shape[0]))))  # Shape: (4, N)
-                pc_segments_transformed = (TCR[i] @ pc_segments_homg).T
-                merged_points.append(points_3d_transformed)
-                merged_segments.append(pc_segments_transformed)
+                pc_segments_homg = np.vstack((np.array(pc_segments[True]).T, np.ones((1, np.array(pc_segments[True]).shape[0]))))  # Shape: (4, N)
+                pc_segments[True] = (TCR[i] @ pc_segments_homg).T
+                for key, segment in pc_segments.items():
+                    if key in merged_segments:
+                        merged_segments[key] = np.concatenate((merged_segments[key], segment), axis=0)
+                    else:
+                        merged_segments[key] = segment
+                pcd = o3d.geometry.PointCloud()
+                pcd.points = o3d.utility.Vector3dVector(points_3d_transformed)
+                pcd.colors = o3d.utility.Vector3dVector(pc_color/255)
+                pcds.append(pcd)
             pcd_combined = o3d.geometry.PointCloud()
-            seg_combined = o3d.geometry.PointCloud()
-            for pcd in merged_points:
+            for pcd in pcds:
                 pcd_combined += pcd
-            for seg in merged_segments:
-                seg_combined += seg
-            pred_grasps_cam, scores, contact_pts, processing_data = self.predict_scene_grasps(sess, pcd_combined, seg_combined, local_regions=local_regions, filter_grasps=filter_grasps, forward_passes=forward_passes)
+            '''vis = o3d.visualization.Visualizer()
+            vis.create_window()
+            vis.add_geometry(pcd_combined)
+            vis.run()
+            vis.destroy_window()
+            o3d.io.write_point_cloud("combined_pcd.pcd", pcd_combined)'''
+            pred_grasps_cam, scores, contact_pts, processing_data = self.predict_scene_grasps(sess, np.asarray(pcd_combined.points), merged_segments, local_regions=local_regions, filter_grasps=filter_grasps, forward_passes=forward_passes)
             return pcd_combined, pred_grasps_cam, scores, contact_pts, processing_data 
         else:
             print("INVALID K MATRIX INPUT")
