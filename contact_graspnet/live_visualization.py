@@ -14,7 +14,6 @@ import tensorflow.compat.v1 as tf
 from segment.FastSAM.fastsam import FastSAM
 from segment.SAMInference import select_from_sam_everything
 from scipy.spatial.transform import Rotation
-from calib_utils.linalg_utils import transform
 from contact_grasp_estimator import GraspEstimator
 import config_utils
 from multicam import XarmEnv
@@ -29,6 +28,8 @@ SERIAL_NO_56 = '317422075456'
 transforms = np.load('calib/transforms.npy', allow_pickle=True).item()
 TCR_81 = transforms[SERIAL_NO_81]['tcr']
 TCR_56 = transforms[SERIAL_NO_56]['tcr']
+TCR_81[:3, 3] /= 1000.0
+TCR_56[:3, 3] /= 1000.0
 
 physical_devices = tf.config.experimental.list_physical_devices('GPU')
 print(f'GPUs: {physical_devices}')
@@ -152,10 +153,10 @@ class RealsenseStreamer():
         for u_pixel, v_pixel in zip(u, v):
             point_3d = self.deproject_pixel((u_pixel, v_pixel), depth_frame)
             points_3d.append(np.array(point_3d))
-        points_3d = np.array(points_3d).T
+        points_3d = np.array(points_3d)
         #print(points_3d.shape)
-        points_3d = np.vstack((points_3d, np.ones([1,points_3d.shape[1]])))
-        points_3d = ((np.eye(4).dot(points_3d)).T)[:, 0:3]
+        #points_3d = np.vstack((points_3d, np.ones([1,points_3d.shape[1]])))
+        #points_3d = ((np.eye(4).dot(points_3d)).T)[:, 0:3]
         colors = cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB).reshape(points_3d.shape)/255.
         
         return points_3d, colors, color_frame, color_image, depth_frame, depth_image
@@ -321,8 +322,8 @@ def segment_image(realsense_img, gaze):
     return segmented_cam_img
 
 # Function to predict grasps
-def predict_grasps(grasp_estimator, sess, depth_image, segmented_cam_img, K, TCR):
-    return grasp_estimator.predict_scene_grasps_from_depth_K_and_2d_seg(sess, depth_image, segmented_cam_img, K, TCR, local_regions=True, filter_grasps=True)
+def predict_grasps(grasp_estimator, sess, depth_image, segmented_cam_img, K, TCR, rgb):
+    return grasp_estimator.predict_scene_grasps_from_depth_K_and_2d_seg(sess, depth_image, segmented_cam_img, K, TCR, rgb = rgb, local_regions=True, filter_grasps=False)
 
 def set_camera_view_and_save_image(vis, extrinsic_matrix, output_filename):
     view_control = vis.get_view_control()
@@ -340,23 +341,23 @@ def set_camera_view_and_save_image(vis, extrinsic_matrix, output_filename):
     image_array = (255.0 * float_array).astype(np.uint8)
     cv2.imwrite(output_filename, cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR))
 
-def process_grasp(grasp, save_folder, i, base_link_color):
+def process_grasp(merged_pcds, grasp, save_folder, i, base_link_color):
     # Visualize and save gripper with cylinders
-    if i != int:
+    if type(i) != int:
         color = base_link_color
     else:
         color = base_link_color[i]
-    visualize_gripper_with_cylinders(vis, grasp, pcd, connections, color)
+    visualize_gripper_with_cylinders(vis, grasp, merged_pcds, connections, color)
     set_camera_view_and_save_image(vis, extrinsic_matrix, os.path.join(save_folder, f"grasp_lines{i}a.png"))
     set_camera_view_and_save_image(vis, extrinsic_matrix1, os.path.join(save_folder, f"grasp_lines{i}b.png"))
 
     # Visualize and save gripper with arm
-    #visualize_gripper_with_arm(vis, grasp, pcd, color)
+    #visualize_gripper_with_arm(vis, grasp, merged_pcds, color)
     #set_camera_view_and_save_image(vis, extrinsic_matrix, os.path.join(save_folder,f"grasp_arm{i}a.png"))
     #set_camera_view_and_save_image(vis, extrinsic_matrix1, os.path.join(save_folder,f"grasp_arm{i}b.png"))
 
     # Visualize and save gripper with axes
-    visualize_gripper_with_axes(vis, grasp, pcd, color)
+    visualize_gripper_with_axes(vis, grasp, merged_pcds, color)
     set_camera_view_and_save_image(vis, extrinsic_matrix, os.path.join(save_folder,f"grasp_axes{i}a.png"))
     set_camera_view_and_save_image(vis, extrinsic_matrix1, os.path.join(save_folder,f"grasp_axes{i}b.png"))
 
@@ -432,24 +433,28 @@ if __name__ == "__main__":
 
 
         depth_images = np.array(depth_images) / 1000  # Convert list to array first
-        pcd, pred_grasps_cam, _, _, pred_gripper_openings = predict_grasps(grasp_estimator, sess, depth_images, np.array(segmented_cam_imgs), np.array([streamers[0].K, streamers[1].K]), np.array([TCR_81, TCR_56]))
+        merged_pcd, pred_grasps_cam, _, _, pred_gripper_openings = predict_grasps(grasp_estimator, sess, depth_images, np.array(segmented_cam_imgs), np.array([streamers[0].K, streamers[1].K]), np.array([TCR_81, TCR_56]), rgb = realsense_imgs)
         print('Predicted grasps:', pred_grasps_cam[True].shape[0])
-        extrinsic_matrix = np.load(f"./calib/extrinsic_{SERIAL_NO_81}.npy")
-        extrinsic_matrix1 = np.load(f"./calib/extrinsic_{SERIAL_NO_56}.npy")
+        extrinsic_matrix = np.load(f"./calib/extrinsic_combined1.npy")
+        extrinsic_matrix1 = np.load(f"./calib/extrinsic_combined2.npy")
         vis = o3d.visualization.Visualizer()
         vis.create_window()
         # Visualize all the predicted grasps
-        visualize_gripper_with_cylinders(vis, pred_grasps_cam[True], pcd, connections, [[0, 0, 0] for _ in range(pred_grasps_cam[True].shape[0])])
-        #semantic_waypoint = streamers[0].deproject_pixel(pixels[0], depth_frames[0])
-        #sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
-        #sphere.translate(semantic_waypoint)
-        #sphere.paint_uniform_color([0,0,1])
-        #vis.add_geometry(sphere)
+        visualize_gripper_with_cylinders(vis, pred_grasps_cam[True], merged_pcd, connections, [[0, 0, 0] for _ in range(pred_grasps_cam[True].shape[0])])
+        semantic_waypoint = streamers[0].deproject_pixel(pixels[0], depth_frames[0])
+        waypoint_h = np.append(semantic_waypoint, 1).reshape(4, 1)
+        transformed_waypoint = TCR_81 @ waypoint_h
+        semantic_waypoint = transformed_waypoint.flatten() 
+        sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
+        sphere.translate(semantic_waypoint)
+        sphere.paint_uniform_color([0,0,1])
+        vis.add_geometry(sphere)
+        vis.run()
         set_camera_view_and_save_image(vis, extrinsic_matrix, os.path.join(full_save_folder, F"pred_grasp_lines_w_gaze.png"))  
         
         # Select the options for VLM
-        distinct_grasps, distinct_openings = find_distinct_grasps(pred_grasps_cam, pred_gripper_openings, pixels[0], depth_frames[0], streamers[0], n_grasps=3, max_distance=0.2)
-        closest_grasps, closest_opening = find_closest_grasp(pred_grasps_cam, pred_gripper_openings, pixels[0], depth_frames[0], streamers[0])
+        distinct_grasps, distinct_openings = find_distinct_grasps(pred_grasps_cam, pred_gripper_openings, semantic_waypoint, n_grasps=3, max_distance=0.2)
+        closest_grasps, closest_opening = find_closest_grasp(pred_grasps_cam, pred_gripper_openings, semantic_waypoint)
         grasps = distinct_grasps
         openings = distinct_openings
         grasps.append(closest_grasps)
@@ -462,7 +467,7 @@ if __name__ == "__main__":
         base_link_color = [[1, 0.6, 0.8], [0.4, 0, 0.8], [1, 0.5, 0], [1, 1, 0]]
         positions, orientations = [], []
         for i, grasp in enumerate(grasps):
-            process_grasp(grasp, full_save_folder, i, base_link_color)
+            process_grasp(merged_pcd, grasp, full_save_folder, i, base_link_color)
 
             # Move robot to the grasp pose
             print("Moving to pose")
@@ -485,11 +490,12 @@ if __name__ == "__main__":
             
 
         # Visualizing all grasps
-        process_grasp(grasps, full_save_folder, '_all_', base_link_color)
+        process_grasp(merged_pcd, grasps, full_save_folder, '_all_', base_link_color)
 
         # Saving all the data
         data = np.array(list(zip(grasps, positions, orientations)), dtype=object)
-        np.save("grasp_data.npy", data)
+        np.save(os.path.join(full_save_folder, "grasp_data.npy"), data)
+
         
         vis.destroy_window()
 

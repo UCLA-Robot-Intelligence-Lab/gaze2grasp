@@ -2,7 +2,7 @@ import numpy as np
 from sklearn.neighbors import NearestNeighbors
 from sklearn.cluster import KMeans
 
-def find_closest_grasp(pred_grasps_cam, pred_gripper_openings, gaze, depth_frame, realsense_streamer):
+def find_closest_grasp(pred_grasps_cam, pred_gripper_openings,semantic_waypoint):
     """
     Finds the closest grasp to a gaze point in a depth frame and returns both the grasp and its opening width.
 
@@ -18,10 +18,6 @@ def find_closest_grasp(pred_grasps_cam, pred_gripper_openings, gaze, depth_frame
             - closest_grasp: 4x4 matrix representing the closest grasp pose
             - gripper_opening: Corresponding gripper opening width
     """
-    try:
-        semantic_waypoint = realsense_streamer.deproject(gaze, depth_frame)
-    except:
-        semantic_waypoint = realsense_streamer.deproject_pixel(gaze, depth_frame)
 
     # Initialize variables to track original indices and openings
     original_indices = []
@@ -94,7 +90,7 @@ def find_closest_grasp(pred_grasps_cam, pred_gripper_openings, gaze, depth_frame
     return closest_grasp, gripper_opening
 
 
-def find_distinct_grasps(pred_grasps_cam, pred_gripper_openings, gaze, depth_frame, realsense_streamer, n_grasps=3, max_distance=0.25):
+def find_distinct_grasps(pred_grasps_cam, pred_gripper_openings, semantic_waypoint, n_grasps=3, max_distance=0.25):
     """
     Finds distinct grasps near a gaze point using clustering on both position and orientation,
     within a maximum Euclidean distance. Returns grasps with their corresponding openings.
@@ -114,10 +110,6 @@ def find_distinct_grasps(pred_grasps_cam, pred_gripper_openings, gaze, depth_fra
             - distinct_openings: List of corresponding gripper opening widths
             - original_indices: List of original indices in the input predictions
     """
-    try:
-        semantic_waypoint = realsense_streamer.deproject(gaze, depth_frame)
-    except:
-        semantic_waypoint = realsense_streamer.deproject_pixel(gaze, depth_frame)
 
     # Combine all grasps into a single array while preserving original indices
     original_indices = []

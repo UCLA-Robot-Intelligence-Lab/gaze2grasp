@@ -14,7 +14,6 @@ import tensorflow.compat.v1 as tf
 from segment.FastSAM.fastsam import FastSAM
 from segment.SAMInference import select_from_sam_everything
 from scipy.spatial.transform import Rotation
-from calib_utils.linalg_utils import transform
 from contact_grasp_estimator import GraspEstimator
 import config_utils
 from multicam import XarmEnv
@@ -27,7 +26,7 @@ SERIAL_NO = '317422074281'  # Camera serial number
 # Load calibration data
 transforms = np.load('calib/transforms.npy', allow_pickle=True).item()
 TCR = transforms[SERIAL_NO]['tcr']
-#TCR[:3, 3] /= 1000.0
+TCR[:3, 3] /= 1000.0
 
 physical_devices = tf.config.experimental.list_physical_devices('GPU')
 print(f'GPUs: {physical_devices}')
@@ -101,10 +100,10 @@ class RealsenseStreamer():
                            [0, self.depth_intrin.fy, self.depth_intrin.ppy],
                            [0, 0, 1]])
 
-        self.dec_filter = rs.decimation_filter()
-        self.spat_filter = rs.spatial_filter()
-        self.temp_filter = rs.temporal_filter()
-        self.hole_filling_filter = rs.hole_filling_filter()
+        #self.dec_filter = rs.decimation_filter()
+        #self.spat_filter = rs.spatial_filter()
+        #self.temp_filter = rs.temporal_filter()
+        #self.hole_filling_filter = rs.hole_filling_filter()
         print("camera started")
 
     def deproject_pixel(self, px, depth_frame):
@@ -151,10 +150,10 @@ class RealsenseStreamer():
         for u_pixel, v_pixel in zip(u, v):
             point_3d = self.deproject_pixel((u_pixel, v_pixel), depth_frame)
             points_3d.append(np.array(point_3d))
-        points_3d = np.array(points_3d).T
-        print(points_3d.shape)
-        points_3d = np.vstack((points_3d, np.ones([1,points_3d.shape[1]])))
-        points_3d = ((np.eye(4).dot(points_3d)).T)[:, 0:3]
+        points_3d = np.array(points_3d)
+        #print(points_3d.shape)
+        #points_3d = np.vstack((points_3d, np.ones([1,points_3d.shape[1]])))
+        #points_3d = ((np.eye(4).dot(points_3d)).T)[:, 0:3]
         colors = cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB).reshape(points_3d.shape)/255.
         
         return points_3d, colors, color_frame, color_image, depth_frame, depth_image
@@ -278,9 +277,11 @@ def visualize_gripper_with_axes(vis, grasps, pcd, base_color):
 def capture_and_process_rgbd(realsense_streamer):
     points_3d, colors, _, realsense_img, depth_frame, depth_image = realsense_streamer.capture_rgbd()
     pcd = o3d.geometry.PointCloud()
+    #print(points_3d.shape)
+    #print(colors.shape)
     pcd.points = o3d.utility.Vector3dVector(points_3d)
     pcd.colors = o3d.utility.Vector3dVector(colors)
-    return pcd, realsense_img, depth_frame, depth_image
+    return pcd, colors, realsense_img, depth_frame, depth_image
 
 # Function to segment image using FastSAM
 def segment_image(realsense_img, gaze):
@@ -289,8 +290,8 @@ def segment_image(realsense_img, gaze):
     return segmented_cam_img
 
 # Function to predict grasps
-def predict_grasps(grasp_estimator, sess, depth_image, segmented_cam_img, K, TCR):
-    return grasp_estimator.predict_scene_grasps_from_depth_K_and_2d_seg(sess, depth_image, segmented_cam_img, K, TCR, local_regions=True, filter_grasps=True)
+def predict_grasps(grasp_estimator, sess, depth_image, segmented_cam_img, K, TCR, rgb):
+    return grasp_estimator.predict_scene_grasps_from_depth_K_and_2d_seg(sess, depth_image, segmented_cam_img, K, TCR, rgb = rgb, local_regions=True, filter_grasps=False)
 
 def set_camera_view_and_save_image(vis, extrinsic_matrix, output_filename):
     view_control = vis.get_view_control()
@@ -355,14 +356,14 @@ if __name__ == "__main__":
     config.gpu_options.allow_growth = True
     config.allow_soft_placement = True
     sess = tf.Session(config=config)
-    print(config)
-    print(sess)
+   # print(config)
+   # print(sess)
     #print('Session created: ', sess.list_devices())
     grasp_estimator.load_weights(sess, saver, FLAGS.ckpt_dir, mode='test')
 
     while True:
-        pcd, realsense_img, depth_frame, depth_image = capture_and_process_rgbd(realsense_streamer)
-        gaze = np.array([351, 278])
+        _, colors, realsense_img, depth_frame, depth_image = capture_and_process_rgbd(realsense_streamer)
+        gaze = np.array([348, 186])
 
         base_folder = "vlm_images"
         while True:
@@ -386,8 +387,7 @@ if __name__ == "__main__":
         cv2.waitKey(0)
 
         depth_image = depth_image / 1000
-        print(np.mean(depth_image))
-        pcd_numpy, pred_grasps_cam, _, _, pred_gripper_openings = predict_grasps(grasp_estimator, sess, depth_image, segmented_cam_img, realsense_streamer.K, TCR)
+        pcd_new, pred_grasps_cam, _, _, pred_gripper_openings = predict_grasps(grasp_estimator, sess, depth_image, segmented_cam_img, realsense_streamer.K, TCR, rgb = realsense_img)
         
         #print('Predicted grasps:', pred_grasps_cam.items())
         print('No. Predicted grasps:', pred_grasps_cam[True].shape[0])
@@ -396,8 +396,11 @@ if __name__ == "__main__":
         vis = o3d.visualization.Visualizer()
         vis.create_window()
         # Visualize all the predicted grasps
-        visualize_gripper_with_cylinders(vis, pred_grasps_cam[True], pcd, connections, [[0, 0, 0] for _ in range(pred_grasps_cam[True].shape[0])])
-        semantic_waypoint = realsense_streamer.deproject_pixel(gaze, depth_frame)
+        visualize_gripper_with_cylinders(vis, pred_grasps_cam[True], pcd_new, connections, [[0, 0, 0] for _ in range(pred_grasps_cam[True].shape[0])])
+        semantic_waypoint = realsense_streamer.deproject_pixel(gaze, depth_frame) 
+        waypoint_h = np.append(semantic_waypoint, 1).reshape(4, 1)
+        transformed_waypoint = TCR @ waypoint_h
+        semantic_waypoint = transformed_waypoint.flatten() 
         sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
         sphere.translate(semantic_waypoint)
         sphere.paint_uniform_color([0,0,1])
@@ -406,8 +409,8 @@ if __name__ == "__main__":
         vis.run()
         # Select the options for VLM
         if pred_grasps_cam[True].shape[0] > 4:
-            distinct_grasps, distinct_openings = find_distinct_grasps(pred_grasps_cam, pred_gripper_openings, gaze, depth_frame, realsense_streamer, n_grasps=3, max_distance=0.2)
-            closest_grasps, closest_opening = find_closest_grasp(pred_grasps_cam, pred_gripper_openings, gaze, depth_frame, realsense_streamer)
+            distinct_grasps, distinct_openings = find_distinct_grasps(pred_grasps_cam, pred_gripper_openings, semantic_waypoint, n_grasps=3, max_distance=0.2)
+            closest_grasps, closest_opening = find_closest_grasp(pred_grasps_cam, pred_gripper_openings, semantic_waypoint)
             grasps = distinct_grasps
             openings = distinct_openings
             grasps.append(closest_grasps)
@@ -424,7 +427,7 @@ if __name__ == "__main__":
         else:
             print("Insufficient grasp predictions...Exiting")
             break
-
+        pcd = pcd_new
         # Visualizing single grasps
         base_link_color =[[1, 0.6, 0.8], [0.4, 0, 0.8], [1, 0.5, 0], [1, 1, 0]]
         positions, orientations = [], []
@@ -436,10 +439,10 @@ if __name__ == "__main__":
             print("Moving to pose")
             robot.grasp(None)
             robot.go_home()
-            position_fingertip = TCR[:3, :3] @ (1000.0 * grasp[:3, 3]) + TCR[:3, 3]
-            rotation_matrix_rob = TCR[:3, :3] @ grasp[:3, :3]
-            #position_fingertip = grasp[:3, 3]
-            #rotation_matrix_rob = grasp[:3, :3]
+            #position_fingertip = TCR[:3, :3] @ (1000.0 * grasp[:3, 3]) + TCR[:3, 3]
+            #rotation_matrix_rob = TCR[:3, :3] @ grasp[:3, :3]
+            position_fingertip = 1000.0 *grasp[:3, 3]
+            rotation_matrix_rob = grasp[:3, :3]
             approach_dir_base = rotation_matrix_rob[:, 2]
             position_ee = position_fingertip #+ 90.0 * approach_dir_base
             rot = Rotation.from_matrix(rotation_matrix_rob)
