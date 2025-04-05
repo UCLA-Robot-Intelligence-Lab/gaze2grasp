@@ -192,7 +192,7 @@ class GraspEstimator:
             
         return filtered_grasp_idcs
 
-    def extract_3d_cam_boxes(self, full_pc, pc_segments, min_size=0.1, max_size=0.3, max_z_height=0.23):
+    def extract_3d_cam_boxes(self, full_pc, pc_segments, min_size=0.15, max_size=0.3, max_z_height=0.23):
         """
         Extract 3D bounding boxes with a maximum z-height constraint.
 
@@ -567,7 +567,8 @@ class GraspEstimator:
             visualize_zxy_planes_actual_values(pcd_combined)
             vis.destroy_window()
             #o3d.io.write_point_cloud("combined_pcd.pcd", pcd_combined)
-            rot = Rotation.from_euler('xy',[135,-90], degrees=True)
+            #rot = Rotation.from_euler('xy',[90,-90], degrees=True)
+            rot = Rotation.from_euler('x',180, degrees=True)
             #print("Rotation matrix:", rot.as_matrix())
             pc_temp = (rot.as_matrix()@np.asarray(pcd_combined.points).T).T
             merged_segments[True] = (rot.as_matrix()@merged_segments[True].T).T

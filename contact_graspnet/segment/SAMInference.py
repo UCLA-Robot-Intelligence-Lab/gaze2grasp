@@ -4,6 +4,22 @@ from segment.FastSAM.fastsam import FastSAMPrompt
 from scipy.spatial import distance
 import numpy as np
 
+'''
+Run_fastsam_point_inference: Uses FastSAM’s point inference, with input as a list of gaze points 
+
+Run_fastsam_single_point_inference: Uses FastSAM’s point inference, with input as a single gaze point
+
+*Point inference was slow and gaze may not always be on the object for appropriate segmentation
+-----------------------------------------
+Select_from_sam_everything_points: Uses FastSAM’s everything inference, filters out masks if any part of it is outside a max distance or if the mask is too big 
+(larger than 20% of scene), appends the centre of each masks
+
+Select_from_sam_everything:  Uses FastSAM’s everything inference, filters out masks if any part of it is outside a max distance or if the mask is too big 
+(larger than 20% of scene), merges those masks into a combined masks and appends the centre of each masks (option to include the largest mask in the filtered mask centers
+
+*Everything inference is faster and centre of the masks are used to be transformed from aria/camera views for accuracy
+'''
+
 def run_fastsam_point_inference(
     model,
     point_prompts,  # Now accepts a list of point prompts
@@ -141,6 +157,7 @@ def select_from_sam_everything(
     iou=0.9,
     conf=0.4,
     max_distance=10,
+    max_mask_ratio = 0.2, # 20% of the image
     device=None,
     retina=True,
     include_largest_mask=False
@@ -200,7 +217,7 @@ def select_from_sam_everything(
                             break
                 if within_radius:
                     mask_size = np.count_nonzero(mask)
-                    if mask_size <= 0.2 * image_size:  # Check if mask is not larger than 20%
+                    if mask_size <= max_mask_ratio * image_size:  # Check if mask is not larger than 20%
                         filtered_masks.append(mask)
                         center_y, center_x = np.mean(mask_indices, axis=0)
                         filtered_centers.append([center_x, center_y])

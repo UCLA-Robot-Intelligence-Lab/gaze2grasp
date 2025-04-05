@@ -129,7 +129,7 @@ class XarmEnv:
     def go_home(self):
         self.arm.set_mode(0)
         self.arm.set_state(state=0)
-        self.arm.set_servo_angle(angle=[0, 0, 0, 70, 0, 70, 0], speed=50, wait=True)
+        self.arm.set_servo_angle(angle=[0, 0, 0, 105, 0, 105, 0], speed=50, wait=True)
         #print('homing', self.pose_ee_radian())
         #curr quat [  -0.016411    -0.37785     0.92533   -0.026844]
         #pos, orientation = (array([     475.73,      1.4586,       416.7]), array([     179.13,   -0.010084,     0.77567]))

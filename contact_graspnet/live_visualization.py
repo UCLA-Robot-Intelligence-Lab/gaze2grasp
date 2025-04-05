@@ -199,35 +199,51 @@ class PixelSelector:
                 break
         return self.clicks
     
-# Gripper control points
 gripper_control_points = np.array([
-    [0, 0, -0.2],  # Base point
-    [0, 0, 0],      # Mid point
-    [0, 0.05, 0.1], # Finger 1 tip
-    [0, -0.05, 0.1],# Finger 2 tip
-    [0, 0.05, 0],   # Finger 1 mid
-    [0, -0.05, 0]   # Finger 2 mid
+    [0, 0, -0.157],  # Base point
+    [0, 0, -0.005],   # Mid point
+    [0, 0.02, 0.035], # Finger 1 tip
+    [0, -0.02, 0.035], # Finger 2 tip
+    [0, 0.02, 0],     # Finger 1 mid
+    [0, -0.02, 0],    # Finger 2 mid
+    [0, 0, 0.05]       # Extension endpoint 
 ])
 
-# Define the grasp line plot
-mid_point = gripper_control_points[1]
+gripper_control_points[:, 2] += 0.06
+
 grasp_line_plot = np.array([
     gripper_control_points[0],  # Base to mid
-    mid_point,                  # Mid point
+    gripper_control_points[1],  # Mid point
     gripper_control_points[2],  # Finger 1 tip
     gripper_control_points[3],  # Finger 2 tip
     gripper_control_points[4],  # Finger 1 mid
-    gripper_control_points[5]   # Finger 2 mid
+    gripper_control_points[5],  # Finger 2 mid
+    gripper_control_points[6]   # Extension endpoint
 ])
 
-# Define connections for the gripper
 connections = [np.array([
     [0, 1],  # Base to mid
     [1, 4],  # Mid to finger 1 mid
     [4, 2],  # Finger 1 mid to finger 1 tip
     [1, 5],  # Mid to finger 2 mid
-    [5, 3]   # Finger 2 mid to finger 2 tip
+    [5, 3],  # Finger 2 mid to finger 2 tip
+    [1, 6]   # Mid point to extension endpoint
 ])]
+def ensure_camera_up(R):
+    """Ensures the gripper's camera is on the upper side by flipping Z-rotation if needed."""
+    gripper_up_dir = R[:, 1]  # Y-axis of the gripper
+    world_up_dir = np.array([0, 0, 1])  # Assuming Z-up world
+    
+    if np.dot(gripper_up_dir, world_up_dir) < 0:
+        R_flip_z = np.array([
+            [-1,  0,  0],
+            [ 0, -1,  0],
+            [ 0,  0,  1]
+        ])
+        print("Flipping Z-axis of the gripper for gripper camera to face up")
+        return R @ R_flip_z  # Apply local Z-flip
+    else:
+        return R
 
 # Function to create a cylinder for visualization
 def create_cylinder(start_point, end_point, radius, color):
@@ -260,19 +276,26 @@ def visualize_gripper_with_cylinders(vis, grasps, pcd, connections, base_color):
         base_color = [base_color]
     vis.clear_geometries()
     vis.add_geometry(pcd)
+    
     for i, grasp in enumerate(grasps):
-        #print(grasp)
-        #print(base_color[i])
+        # Create closed gripper points
         gripper_control_points_closed = grasp_line_plot.copy()
         gripper_control_points_closed[2:6:2, 1] = np.sign(grasp_line_plot[2:6:2, 1]) * GRIPPER_MAX_WIDTH / 2
         
+        # Apply grasp transformation
         R = np.array(grasp[:3, :3])
         t = np.array(grasp[:3, 3])
         pts = np.matmul(gripper_control_points_closed, R.T) + t
+        
+        # Draw all connections
         for connection in connections[0]:
             start_point = pts[connection[0]]
             end_point = pts[connection[1]]
-            cylinder = create_cylinder(start_point, end_point, 0.005, base_color[i])
+            
+            # Use thinner cylinder for the extension line (connection [1,6])
+            radius = 0.002 if connection[1] == 6 else 0.005
+            
+            cylinder = create_cylinder(start_point, end_point, radius, base_color[i])
             vis.add_geometry(cylinder)
 
 def visualize_gripper_with_arm(vis, grasps, pcd, base_color):
@@ -318,7 +341,7 @@ def capture_and_process_rgbd(realsense_streamer):
 # Function to segment image using FastSAM
 def segment_image(realsense_img, gaze):
     seg_model = FastSAM('./contact_graspnet/segment/FastSAM-s.pt')
-    segmented_cam_img, _ = select_from_sam_everything(seg_model, [gaze], input_img=realsense_img, imgsz=640, iou=0.9, conf=0.4, max_distance=10, retina=True)
+    segmented_cam_img, _ = select_from_sam_everything(seg_model, [gaze], input_img=realsense_img, imgsz=640, iou=0.9, conf=0.4, max_distance=5, max_mask_ratio = 0.2, retina=True)
     return segmented_cam_img
 
 # Function to predict grasps
@@ -398,10 +421,15 @@ if __name__ == "__main__":
         results = [capture_and_process_rgbd(streamer) for streamer in streamers]
         pcds, realsense_imgs, depth_frames, depth_images = zip(*results)
         pcds, realsense_imgs, depth_frames, depth_images = np.array(pcds), np.array(realsense_imgs), np.array(depth_frames), np.array(depth_images)
-        pixel_selector = PixelSelector()
-        pixels = pixel_selector.run(realsense_imgs[0])
-        pixels.append(pixel_selector.run(realsense_imgs[1])[0])
-
+        pixel_selector_81 = PixelSelector()
+        pixel_selector_56 = PixelSelector()
+        pixels_81 = pixel_selector_81.run(realsense_imgs[0])
+        print(pixels_81)
+        pixels_56 = pixel_selector_56.run(realsense_imgs[1])
+        print(pixels_56)
+        pixels = pixels_81
+        pixels.extend(pixels_56)
+        print(pixels)
         base_folder = "vlm_images"
         while True:
             save_folder = input(f"Enter the folder name to save results (will be saved inside '{base_folder}'): ").strip()
@@ -430,6 +458,12 @@ if __name__ == "__main__":
         segmented_cam_imgs.append(segment_image(realsense_imgs[1], np.array(pixels[1])))
         cv2.imshow("Gaze Segmentation (Camera 56)", segmented_cam_imgs[1].astype(np.uint8) * 255)
         cv2.waitKey(0)
+
+        place_ee = streamers[1].deproject_pixel(pixels[2], depth_frames[1])
+        place_ee_h = np.append(place_ee, 1).reshape(4, 1)
+        place_ee = (TCR_56 @ place_ee_h).flatten() * 1000
+        place_ee[2] = place_ee[2] + 220
+        print("Place position (EE Frame): ", place_ee)
 
 
         depth_images = np.array(depth_images) / 1000  # Convert list to array first
@@ -473,14 +507,15 @@ if __name__ == "__main__":
 
             # Move robot to the grasp pose
             print("Moving to pose")
-            robot.grasp(None)
-            robot.go_home()
+            #robot.grasp(None)
+            #robot.go_home()
             #position_fingertip = TCR[:3, :3] @ (1000.0 * grasp[:3, 3]) + TCR[:3, 3]
             #rotation_matrix_rob = TCR[:3, :3] @ grasp[:3, :3]
             print("Move to Grasp matrix: ", grasp)
             position_fingertip = 1000 * grasp[:3, 3]
             position_fingertip[2] = position_fingertip[2]+157
             rotation_matrix_rob = grasp[:3, :3]
+            rotation_matrix_rob = ensure_camera_up(rotation_matrix_rob)
             approach_dir_base = rotation_matrix_rob[:, 2]
             position_ee = position_fingertip + 90.0 * approach_dir_base
             rot = Rotation.from_matrix(rotation_matrix_rob)
@@ -489,9 +524,25 @@ if __name__ == "__main__":
             print("Orientation (EE Frame): ", [roll, pitch, yaw])
             positions.append(position_ee)
             orientations.append([roll, pitch, yaw])
-            robot.move_to_ee_pose(position_ee, [roll, pitch, yaw])
-            robot.grasp(openings[i])
-            
+            #robot.move_to_ee_pose(position_fingertip, [roll, pitch, yaw])
+            #robot.move_to_ee_pose(position_ee, [roll, pitch, yaw])
+            #robot.grasp(openings[i])
+            #robot.grasp(None)
+            #robot.move_to_ee_pose(position_fingertip, [roll, pitch, yaw])
+        
+        # Only move to the last pose
+        robot.grasp(None)
+        robot.go_home()
+        robot.move_to_ee_pose(position_fingertip, [roll, pitch, yaw])
+        robot.move_to_ee_pose(position_ee, [roll, pitch, yaw])
+        robot.grasp(openings[-1])
+        time.sleep(0.5)
+        robot.go_home()
+        robot.move_to_ee_pose(place_ee, np.array([-180, 0, 0]))
+        robot.grasp(None)
+        time.sleep(0.5)
+        robot.go_home()
+
 
         # Visualizing all grasps
         process_grasp(merged_pcd, grasps, full_save_folder, '_all_', base_link_color)
