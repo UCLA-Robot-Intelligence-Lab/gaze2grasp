@@ -449,6 +449,8 @@ if __name__ == "__main__":
         sphere.translate(semantic_waypoint)
         sphere.paint_uniform_color([0,0,1])
         vis.add_geometry(sphere)
+        origin = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
+        vis.add_geometry(origin)
         vis.run()
         set_camera_view_and_save_image(vis, extrinsic_matrix, os.path.join(full_save_folder, F"pred_grasp_lines_w_gaze.png"))  
         
@@ -475,7 +477,9 @@ if __name__ == "__main__":
             robot.go_home()
             #position_fingertip = TCR[:3, :3] @ (1000.0 * grasp[:3, 3]) + TCR[:3, 3]
             #rotation_matrix_rob = TCR[:3, :3] @ grasp[:3, :3]
-            position_fingertip = grasp[:3, 3]
+            print("Move to Grasp matrix: ", grasp)
+            position_fingertip = 1000 * grasp[:3, 3]
+            position_fingertip[2] = position_fingertip[2]+157
             rotation_matrix_rob = grasp[:3, :3]
             approach_dir_base = rotation_matrix_rob[:, 2]
             position_ee = position_fingertip + 90.0 * approach_dir_base

@@ -93,3 +93,34 @@ class HomographyManager:
         transformed_x, transformed_y = self.apply_homography(gaze_coordinates)
 
         return color_image, transformed_x, transformed_y
+    
+    def get_vector(self, x, y):
+        if self.depth_frame is None:
+            print("Depth frame is not available.")
+            return None
+        
+        x = int(x)
+        y = int(y)
+        
+        depth = self.depth_frame.get_distance(x, y)
+        if depth == 0:
+            print("Depth is zero.")
+            return None
+        
+        depth_intrinsics = self.depth_frame.profile.as_video_stream_profile().get_intrinsics()
+
+        point_3d = rs.rs2_deproject_pixel_to_point(depth_intrinsics, [x, y], depth)
+
+        return point_3d
+    
+    def projected_point_test(self, x):
+        x_3d, y_3d, z_3d = x
+                            
+        # Draw a line from the camera origin to the gaze point (3D vector)
+        origin = (0, 0, 0)  # Camera center
+        gaze_point = (x_3d, y_3d, z_3d)
+        depth_intrinsics = self.depth_frame.profile.as_video_stream_profile().get_intrinsics()
+        # If you want to visualize it in 2D, you need to project the 3D point to 2D (for rendering on the image)
+        projected_point = rs.rs2_project_point_to_pixel(depth_intrinsics, gaze_point)
+
+        return projected_point
