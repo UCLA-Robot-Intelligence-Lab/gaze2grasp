@@ -363,7 +363,7 @@ if __name__ == "__main__":
 
     while True:
         _, colors, realsense_img, depth_frame, depth_image = capture_and_process_rgbd(realsense_streamer)
-        gaze = np.array([348, 186])
+        gaze = np.array([472, 99])
 
         base_folder = "vlm_images"
         while True:

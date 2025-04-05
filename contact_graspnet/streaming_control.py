@@ -383,7 +383,20 @@ def main():
                     if transformed_x is not None and transformed_y is not None and gaze_coordinates is not None:
                         cv2.circle(realsense_image, (int(transformed_x), int(transformed_y)), 5, (0, 255, 0), 10)
                         cv2.putText(realsense_image, f'Transformed Gaze: ({round(transformed_x, 2)}, {round(transformed_y, 2)})', (20, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-                        
+
+                        point_3d = homography_manager.get_vector(transformed_x, transformed_y)
+                        if point_3d is not None:
+
+                            # If you want to visualize it in 2D, you need to project the 3D point to 2D (for rendering on the image)
+                            projected_point = homography_manager.projected_point_test(point_3d)
+                            
+                            # Draw a line from (0,0) to the projected gaze point on the 2D image
+                            start = (int(0), int(0))  # Camera center (for 2D)
+                            end = (int(transformed_x), int(transformed_y))  # Projected gaze point
+                            
+                            cv2.line(realsense_image, start, end, (0, 0, 255), 2)  # Draw a red line
+
+                    
                         # gaze history returns true if user has been staring at the same (x, y) coordinate point for x amount of frames
                         if gaze_history.log((transformed_x, transformed_y)):
                             print(f'USER IS STARING AT {gaze_history.report_stare_coordinates()}')
@@ -396,7 +409,7 @@ def main():
                             else:
                                 gaze = [int(np.floor(transformed_x)), int(np.floor(transformed_y))]    
                             print("gaze: ", gaze)
-                            goto(robot, homography_manager.realsense_streamer, gaze, homography_manager.depth_frame, TCR, refine=True)
+                            #goto(robot, homography_manager.realsense_streamer, gaze, homography_manager.depth_frame, TCR, refine=True)
 
                         # res = input('save?')
                         # if res == 'y' or res == 'Y':

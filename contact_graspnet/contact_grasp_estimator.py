@@ -5,7 +5,7 @@ import os
 import open3d as o3d
 import time
 import copy
-
+from scipy.spatial.transform import Rotation 
 
 import tensorflow.compat.v1 as tf
 tf.disable_eager_execution()
@@ -20,6 +20,67 @@ from tf_train_ops import get_bn_decay
 import config_utils
 from data import farthest_points, distance_by_translation_point, preprocess_pc_for_inference, regularize_pc_point_count, depth2pc, reject_median_outliers
 
+import open3d as o3d
+import numpy as np
+
+def visualize_zxy_planes_actual_values(pcd):
+    geometries = [pcd]
+    colors = [
+        [1, 0, 0],  # Red
+        [0, 1, 0],  # Green
+        [0, 0, 1],  # Blue
+        [1, 1, 0],  # Yellow
+        [1, 0, 1]   # Magenta
+    ]
+
+    plane_size = 2.0  # Make planes larger for better visibility
+    half_size = plane_size / 2
+    plane_thickness = 0.01
+
+    '''# Z-Planes (no rotation needed)
+    for i, z in enumerate([-0.15, 0, 0.1]):
+        plane = o3d.geometry.TriangleMesh.create_box(
+            width=plane_size, 
+            height=plane_size, 
+            depth=plane_thickness
+        )
+        plane.translate((-half_size, -half_size, z - plane_thickness/2))
+        plane.paint_uniform_color(colors[i % len(colors)])
+        geometries.append(plane)'''
+
+    # X-Planes (rotated around Y-axis)
+    for i, x in enumerate([0,0.55]):
+        plane = o3d.geometry.TriangleMesh.create_box(
+            width=plane_size, 
+            height=plane_size, 
+            depth=plane_thickness
+        )
+        # Move to origin, rotate, then move to desired x-position
+        plane.translate((-half_size, -half_size, -plane_thickness/2))
+        plane.rotate(plane.get_rotation_matrix_from_xyz((0, np.pi/2, 0)))
+        plane.translate((x, 0, 0))
+        plane.paint_uniform_color(colors[i % len(colors)])
+        geometries.append(plane)
+
+    # Y-Planes (rotated around X-axis)
+    for i, y in enumerate([-0.55, 0.55]):
+        plane = o3d.geometry.TriangleMesh.create_box(
+            width=plane_size, 
+            height=plane_size, 
+            depth=plane_thickness
+        )
+        # Move to origin, rotate, then move to desired y-position
+        plane.translate((-half_size, -half_size, -plane_thickness/2))
+        plane.rotate(plane.get_rotation_matrix_from_xyz((-np.pi/2, 0, 0)))
+        plane.translate((0, y, 0))
+        plane.paint_uniform_color(colors[i % len(colors)])
+        geometries.append(plane)
+
+    # Add coordinate axes
+    origin = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
+    geometries.append(origin)
+
+    o3d.visualization.draw_geometries(geometries)
 class GraspEstimator:
     """
     Class for building and inferencing Contact-GraspNet
@@ -131,74 +192,15 @@ class GraspEstimator:
             
         return filtered_grasp_idcs
 
-    def extract_3d_cam_boxes_original(self, full_pc, pc_segments, min_size=0.1, max_size=0.25):
+    def extract_3d_cam_boxes(self, full_pc, pc_segments, min_size=0.1, max_size=0.3, max_z_height=0.23):
         """
-        Extract 3D bounding boxes around the pc_segments for inference to create 
-        dense and zoomed-in predictions but still take context into account.
-        
-        :param full_pc: Nx3 scene point cloud
-        :param pc_segments: Mx3 segmented point cloud of the object of interest
-        :param min_size: minimum side length of the 3D bounding box
-        :param max_size: maximum side length of the 3D bounding box
-        :returns: (pc_regions, obj_centers) Point cloud box regions and their centers        
-        """
-        
-        pc_regions = {}
-        obj_centers = {}
-        
-        for i in pc_segments:
-            # Debugging: Print the shape and values of pc_segments[i]
-            #print(f"pc_segments[{i}] shape:", pc_segments[i].shape)
-            #print(f"pc_segments[{i}] sample points:\n", pc_segments[i][:5])  # Print first 5 points
-
-            if np.any(pc_segments[i]):
-                max_bounds = np.max(pc_segments[i][:, :3], axis=0)
-                min_bounds = np.min(pc_segments[i][:, :3], axis=0)
-
-                obj_extent = max_bounds - min_bounds
-                obj_center = min_bounds + obj_extent / 2
-                
-                # Debugging: Print obj_center and obj_extent
-                #print(f"Object {i} center:", obj_center)
-                #print(f"Object {i} extent:", obj_extent)
-
-                # cube size is between min_size and max_size depending on object extents
-                size = np.minimum(np.maximum(np.max(obj_extent) * 2, min_size), max_size)
-                print(f"Extracted Region Cube Size for object {i}:", size)
-
-                # Debugging: Print the filtering condition
-                lower_bound = obj_center - size / 2
-                upper_bound = obj_center + size / 2
-                print(f"Lower bound for object {i}:", lower_bound)
-                print(f"Upper bound for object {i}:", upper_bound)
-
-                # Filter full_pc to get points within the bounding box
-                condition = np.all(full_pc > lower_bound, axis=1) & np.all(full_pc < upper_bound, axis=1)
-                print(f"Number of points in full_pc satisfying condition for object {i}:", np.sum(condition))
-
-                partial_pc = full_pc[condition]
-                partial_pc = full_pc
-
-                if np.any(partial_pc):
-                    partial_pc = regularize_pc_point_count(partial_pc, self._contact_grasp_cfg['DATA']['raw_num_points'], use_farthest_point=self._contact_grasp_cfg['DATA']['use_farthest_point'])
-                    pc_regions[i] = partial_pc
-                    obj_centers[i] = obj_center
-                    #print(f"Added {partial_pc.shape[0]} points to pc_regions for object {i}")
-                else:
-                    print(f"No points in full_pc satisfy the condition for object {i}")
-            else:
-                print(f"pc_segments[{i}] is empty")
-
-        return pc_regions, obj_centers
-
-    def extract_3d_cam_boxes(self, full_pc, pc_segments, min_size=0.1, max_size=0.3):
-        """
-        Extract 3D bounding boxes around the pc_segments and visualize them.
+        Extract 3D bounding boxes with a maximum z-height constraint.
 
         :param full_pc: Nx3 scene point cloud
         :param pc_segments: Dictionary of segmented point clouds
         :param min_size: minimum side length of the 3D bounding box
         :param max_size: maximum side length of the 3D bounding box
+        :param max_z_height: maximum z-height of the upper surface of the box
         :returns: (pc_regions, obj_centers) Point cloud box regions and their centers
         """
 
@@ -212,26 +214,34 @@ class GraspEstimator:
         geometries.append(full_pcd)
 
         for i in pc_segments:
+            pc_segments[i] = reject_median_outliers(pc_segments[i], m=0.4, z_only=False)
+
             if np.any(pc_segments[i]):
                 max_bounds = np.max(pc_segments[i][:, :3], axis=0)
                 min_bounds = np.min(pc_segments[i][:, :3], axis=0)
 
                 obj_extent = max_bounds - min_bounds
-                obj_center = min_bounds + obj_extent / 2
+                box_size = np.max(obj_extent)  # Use actual extent, not doubled
 
-                size = np.minimum(np.maximum(np.max(obj_extent) * 2, min_size), max_size)
-                print(f"Extracted Region Cube Size for object {i}:", size)
+                # Apply size constraints
+                box_size = np.clip(box_size, min_size, max_size)
 
-                lower_bound = obj_center - size / 2
-                upper_bound = obj_center + size / 2
-                print(f"Lower bound for object {i}:", lower_bound)
-                print(f"Upper bound for object {i}:", upper_bound)
+                # Calculate center with z-offset
+                obj_center = (max_bounds + min_bounds) / 2
+                obj_center[2] -= 0.06  # Apply vertical offset
+
+                # Calculate bounds with precise alignment
+                lower_bound = obj_center - box_size / 2
+                upper_bound = obj_center + box_size / 2
+                #top_z = upper_bound[2]
+                #print(f"Z-coordinate of top of box for object {i}: {top_z}")
+                # Apply maximum z-height constraint
+                upper_bound[2] = min(upper_bound[2], lower_bound[2] + max_z_height)
 
                 condition = np.all(full_pc > lower_bound, axis=1) & np.all(full_pc < upper_bound, axis=1)
                 print(f"Number of points in full_pc satisfying condition for object {i}:", np.sum(condition))
 
                 partial_pc = full_pc[condition]
-                #partial_pc = full_pc
 
                 if np.any(partial_pc):
                     partial_pc = regularize_pc_point_count(partial_pc, self._contact_grasp_cfg['DATA']['raw_num_points'], use_farthest_point=self._contact_grasp_cfg['DATA']['use_farthest_point'])
@@ -500,7 +510,7 @@ class GraspEstimator:
             points_3d_transformed = (TCR @ points_3d_homog).T
             pc_segments_homg = np.vstack((np.array(pc_segments[True]).T, np.ones((1, np.array(pc_segments[True]).shape[0]))))  # Shape: (4, N)
             pc_segments[True] = (TCR @ pc_segments_homg).T
-            pred_grasps_cam, scores, contact_pts, processing_data = self.predict_scene_grasps(sess, points_3d_transformed, pc_segments, local_regions=local_regions, filter_grasps=filter_grasps, forward_passes=forward_passes)
+            pred_grasps_cam, scores, contact_pts, gripper_openings = self.predict_scene_grasps(sess, points_3d_transformed, pc_segments, local_regions=local_regions, filter_grasps=filter_grasps, forward_passes=forward_passes)
             pcd = o3d.geometry.PointCloud()
             pcd.points = o3d.utility.Vector3dVector(points_3d_transformed)
             pcd.colors = o3d.utility.Vector3dVector(pc_color/255)
@@ -518,7 +528,7 @@ class GraspEstimator:
                 
                 # Apply inverse rotation to orientation
             #    grasp[:3, :3] = R_inv @ grasp[:3, :3]
-            return pcd, pred_grasps_cam, scores, contact_pts, processing_data
+            return pcd, pred_grasps_cam, scores, contact_pts, gripper_openings
         elif len(depth.shape) == 3 and len(segmap.shape) == 3 and len(K.shape) == 3 and len(TCR.shape) == 3:
             print("MERGING POINT CLOUDS FOR CONTACT_GRASPNET_PRED")
             merged_segments, pcds= {}, []
@@ -550,14 +560,50 @@ class GraspEstimator:
             pcd_combined = o3d.geometry.PointCloud()
             for pcd in pcds:
                 pcd_combined += pcd
-            '''vis = o3d.visualization.Visualizer()
+            
+            # Example usage (replace pcd_combined with your point cloud)
+            vis = o3d.visualization.Visualizer()
+            vis.create_window()
+            visualize_zxy_planes_actual_values(pcd_combined)
+            vis.destroy_window()
+            #o3d.io.write_point_cloud("combined_pcd.pcd", pcd_combined)
+            rot = Rotation.from_euler('xy',[135,-90], degrees=True)
+            #print("Rotation matrix:", rot.as_matrix())
+            pc_temp = (rot.as_matrix()@np.asarray(pcd_combined.points).T).T
+            merged_segments[True] = (rot.as_matrix()@merged_segments[True].T).T
+            
+            
+            pcd_temp = o3d.geometry.PointCloud()
+            pcd_temp.points = o3d.utility.Vector3dVector(pc_temp)
+            vis = o3d.visualization.Visualizer()
             vis.create_window()
             vis.add_geometry(pcd_combined)
+            vis.add_geometry(pcd_temp)
+            origin = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
+            vis.add_geometry(origin)
             vis.run()
             vis.destroy_window()
-            o3d.io.write_point_cloud("combined_pcd.pcd", pcd_combined)'''
-            pred_grasps_cam, scores, contact_pts, processing_data = self.predict_scene_grasps(sess, np.asarray(pcd_combined.points), merged_segments, local_regions=local_regions, filter_grasps=filter_grasps, forward_passes=forward_passes)
-            return pcd_combined, pred_grasps_cam, scores, contact_pts, processing_data 
+            pred_grasps_cam, scores, contact_pts, gripper_openings = self.predict_scene_grasps(sess, pc_temp, merged_segments, local_regions=local_regions, filter_grasps=filter_grasps, forward_passes=forward_passes)
+            rot_inv_matrix = rot.inv().as_matrix()
+            #print("Inv_Rotation matrix:", rot_inv_matrix)
+
+            # Assuming pred_grasps_cam[True] is a (N, 4, 4) array
+            num_grasps = pred_grasps_cam[True].shape[0]
+            rotated_grasps = np.zeros_like(pred_grasps_cam[True])
+
+            for i in range(num_grasps):
+                # Apply rotation to the 3x3 rotation part of the grasp
+                rotated_grasps[i, :3, :3] = rot_inv_matrix @ pred_grasps_cam[True][i, :3, :3]
+                # Copy the translation part
+                rotated_grasps[i, :3, 3] = rot_inv_matrix @ pred_grasps_cam[True][i, :3, 3]
+                # Copy the last row
+                rotated_grasps[i, 3, :] = pred_grasps_cam[True][i, 3, :]
+            #print("Grasp before rotation:", pred_grasps_cam[True][0])
+            pred_grasps_cam[True] = rotated_grasps
+            #print("Grasp after rotation:", pred_grasps_cam[True][0])
+            #pred_grasps_cam, scores, contact_pts, gripper_openings = self.predict_scene_grasps(sess, np.asarray(pcd_combined.points), merged_segments, local_regions=local_regions, filter_grasps=filter_grasps, forward_passes=forward_passes)
+            
+            return pcd_combined, pred_grasps_cam, scores, contact_pts, gripper_openings
         else:
             print("INVALID K MATRIX INPUT")
             return None

@@ -113,7 +113,7 @@ class XarmEnv:
         #0 is open
         #1 is closed
         gripper_open = 800
-        gripper_closed = 0
+        gripper_closed = 75
         if grasp == None:
             ret = self.arm.set_gripper_position(gripper_open, wait=False)
             if ret != 0:

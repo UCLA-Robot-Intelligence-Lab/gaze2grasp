@@ -2,16 +2,22 @@ import numpy as np
 from sklearn.neighbors import NearestNeighbors
 from sklearn.cluster import KMeans
 
-def find_closest_grasp(pred_grasps_cam, pred_gripper_openings,semantic_waypoint):
+def is_position_in_range(position, x_range=(0.060, 0.550), y_range=(-0.550, 0.550), z_range=(0.020-0.157, 0.600-0.157)):#z_range=(0.020, 0.600)):
+    """Check if position is within valid workspace ranges in meters in the pcd ."""
+    x, y, z = position
+    return (x_range[0] <= x <= x_range[1] and
+            y_range[0] <= y <= y_range[1] and
+            z_range[0] <= z <= z_range[1])
+            
+def find_closest_grasp(pred_grasps_cam, pred_gripper_openings, semantic_waypoint, filter_in_range=True):
     """
-    Finds the closest grasp to a gaze point in a depth frame and returns both the grasp and its opening width.
+    Finds the closest grasp to a semantic waypoint, optionally filtering by workspace range.
 
     Args:
         pred_grasps_cam: Grasp predictions from the camera perspective. Can be a dictionary or a NumPy array.
         pred_gripper_openings: Corresponding gripper opening widths. Must match structure of pred_grasps_cam.
-        gaze: Gaze coordinates (x, y) in pixels.
-        depth_frame: Depth frame data.
-        realsense_streamer: Instance of the RealsenseStreamer class for deprojection.
+        semantic_waypoint: 3D coordinates (x, y, z) of the semantic waypoint.
+        filter_in_range: Boolean to filter out grasps outside the workspace range.
 
     Returns:
         tuple: (closest_grasp, gripper_opening) where:
@@ -66,6 +72,17 @@ def find_closest_grasp(pred_grasps_cam, pred_gripper_openings,semantic_waypoint)
     else:
         raise ValueError(f"Unexpected shape for all_grasps: {all_grasps.shape}")
 
+    # Optionally filter grasps by workspace range
+    if filter_in_range:
+        valid_indices = [i for i, center in enumerate(grasp_centers) if is_position_in_range(center)]
+        if not valid_indices:
+            print("No grasps within workspace range.")
+            return None, None
+        grasp_centers = grasp_centers[valid_indices]
+        all_grasps = all_grasps[valid_indices]
+        all_openings = all_openings[valid_indices]
+        original_indices = [original_indices[i] for i in valid_indices]
+
     # Find nearest grasp
     nbrs = NearestNeighbors(n_neighbors=1).fit(grasp_centers)
     dists, idxs = nbrs.kneighbors(np.array(semantic_waypoint).reshape(1, -1), return_distance=True)
@@ -89,20 +106,18 @@ def find_closest_grasp(pred_grasps_cam, pred_gripper_openings,semantic_waypoint)
     print(f"GRIPPER OPENING: {gripper_opening}")
     return closest_grasp, gripper_opening
 
-
-def find_distinct_grasps(pred_grasps_cam, pred_gripper_openings, semantic_waypoint, n_grasps=3, max_distance=0.25):
+def find_distinct_grasps(pred_grasps_cam, pred_gripper_openings, semantic_waypoint, n_grasps=3, max_distance=0.25, filter_in_range=True):
     """
     Finds distinct grasps near a gaze point using clustering on both position and orientation,
-    within a maximum Euclidean distance. Returns grasps with their corresponding openings.
+    within a maximum Euclidean distance, optionally filtering by workspace range.
 
     Args:
         pred_grasps_cam: Grasp predictions from the camera perspective. Can be a dictionary or a NumPy array.
         pred_gripper_openings: Corresponding gripper opening widths for each grasp.
-        gaze: Gaze coordinates (x, y) in pixels.
-        depth_frame: Depth frame data.
-        realsense_streamer: Instance of the RealsenseStreamer class for deprojection.
+        semantic_waypoint: 3D coordinates (x, y, z) of the semantic waypoint.
         n_grasps: Number of distinct grasps to return.
         max_distance: Maximum Euclidean distance (in meters) from the gaze point for grasps to be considered.
+        filter_in_range: Boolean to filter out grasps outside the workspace range.
 
     Returns:
         tuple: (distinct_grasps, distinct_openings, original_indices) where:
@@ -148,9 +163,21 @@ def find_distinct_grasps(pred_grasps_cam, pred_gripper_openings, semantic_waypoi
     else:
         raise ValueError(f"Unexpected shape for all_grasps: {all_grasps.shape}")
 
+    # Optionally filter grasps by workspace range
+    if filter_in_range:
+        valid_indices = [i for i, center in enumerate(grasp_centers) if is_position_in_range(center)]
+        if not valid_indices:
+            print("No grasps within workspace range.")
+            return None, None
+        grasp_centers = grasp_centers[valid_indices]
+        all_grasps = all_grasps[valid_indices]
+        all_openings = all_openings[valid_indices]
+        original_indices = [original_indices[i] for i in valid_indices]
+        grasp_orientations = grasp_orientations[valid_indices]
+
     # Combine position and orientation features for clustering (with scaling)
     position_scale = 1.0  # meters
-    orientation_scale = 0.1  # smaller weight for orientation
+    orientation_scale = 0.5  # smaller weight for orientation
     features = np.hstack([
         grasp_centers * position_scale,
         grasp_orientations * orientation_scale
@@ -169,7 +196,7 @@ def find_distinct_grasps(pred_grasps_cam, pred_gripper_openings, semantic_waypoi
 
     if len(nearby_grasps) == 0:
         print("No grasps found within the specified distance.")
-        return None, None
+        return None, None, None
 
     # Cluster the nearby grasps using both position and orientation
     kmeans = KMeans(n_clusters=min(n_grasps, len(nearby_grasps)), random_state=0).fit(nearby_features)
@@ -177,7 +204,6 @@ def find_distinct_grasps(pred_grasps_cam, pred_gripper_openings, semantic_waypoi
     # Find the most central grasp in each cluster
     distinct_grasps = []
     distinct_openings = []
-    #distinct_indices = []
     
     for cluster_id in range(kmeans.n_clusters):
         cluster_mask = (kmeans.labels_ == cluster_id)
@@ -193,7 +219,6 @@ def find_distinct_grasps(pred_grasps_cam, pred_gripper_openings, semantic_waypoi
         selected_idx = idx[0][0]
         distinct_grasps.append(cluster_grasps[selected_idx])
         distinct_openings.append(nearby_openings[cluster_mask][selected_idx])
-        #distinct_indices.append(original_indices[nearby_indices[cluster_mask][selected_idx]])
 
     print(f"Found {len(distinct_grasps)} distinct grasps with openings: {distinct_openings}")
     return distinct_grasps, distinct_openings
