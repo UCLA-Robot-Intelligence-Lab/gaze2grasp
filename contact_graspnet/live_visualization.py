@@ -87,7 +87,7 @@ class RealsenseStreamer():
         if self.serial_no == '317422075456':
             color_sensor.set_option(rs.option.exposure, 140)
 
-        # Intrinsics & Extrinsics
+        # Intrinsics & s
         frames = self.pipeline.wait_for_frames()
         frames = self.align_to_color.process(frames)
 
@@ -320,6 +320,8 @@ def visualize_gripper_with_axes(vis, grasps, pcd, base_color):
     for i, grasp in enumerate(grasps):
         R = np.array(grasp[:3, :3])  # Extract rotation
         t = np.array(grasp[:3, 3])   # Extract translation (position)
+        approach_dir_base = R[:, 2]
+        t = t + 0.06 * approach_dir_base
 
         # Create coordinate frame and sphere for visualization
         grasp_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.05, origin=t)
@@ -346,17 +348,18 @@ def segment_image(realsense_img, gaze):
 
 # Function to predict grasps
 def predict_grasps(grasp_estimator, sess, depth_image, segmented_cam_img, K, TCR, rgb):
-    return grasp_estimator.predict_scene_grasps_from_depth_K_and_2d_seg(sess, depth_image, segmented_cam_img, K, TCR, rgb = rgb, local_regions=True, filter_grasps=False)
+    return grasp_estimator.predict_scene_grasps_from_depth_K_and_2d_seg(sess, depth_image, segmented_cam_img, K, TCR, rgb = rgb, local_regions=True, filter_grasps=True)
 
-def set_camera_view_and_save_image(vis, extrinsic_matrix, output_filename):
+def set_camera_view_and_save_image(vis, intrinsic, extrinsic_matrix, output_filename):
     view_control = vis.get_view_control()
     param = view_control.convert_to_pinhole_camera_parameters()
+    param.intrinsic = intrinsic
     param.extrinsic = extrinsic_matrix
     view_control.convert_from_pinhole_camera_parameters(param)
 
     vis.update_renderer()
     vis.poll_events()
-    time.sleep(1)
+    time.sleep(0.2)
 
     # Capture and save the image
     float_buffer = vis.capture_screen_float_buffer()
@@ -371,8 +374,10 @@ def process_grasp(merged_pcds, grasp, save_folder, i, base_link_color):
     else:
         color = base_link_color[i]
     visualize_gripper_with_cylinders(vis, grasp, merged_pcds, connections, color)
-    set_camera_view_and_save_image(vis, extrinsic_matrix, os.path.join(save_folder, f"grasp_lines{i}a.png"))
-    set_camera_view_and_save_image(vis, extrinsic_matrix1, os.path.join(save_folder, f"grasp_lines{i}b.png"))
+    set_camera_view_and_save_image(vis, intrinsic, extrinsic_matrix, os.path.join(save_folder, f"grasp_lines{i}a.png"))
+    set_camera_view_and_save_image(vis, intrinsic1, extrinsic_matrix1, os.path.join(save_folder, f"grasp_lines{i}b.png"))
+    set_camera_view_and_save_image(vis, intrinsic2, extrinsic_matrix2, os.path.join(save_folder, f"grasp_lines{i}c.png"))
+    set_camera_view_and_save_image(vis, intrinsic3, extrinsic_matrix3, os.path.join(save_folder, f"grasp_lines{i}d.png"))
 
     # Visualize and save gripper with arm
     #visualize_gripper_with_arm(vis, grasp, merged_pcds, color)
@@ -381,9 +386,19 @@ def process_grasp(merged_pcds, grasp, save_folder, i, base_link_color):
 
     # Visualize and save gripper with axes
     visualize_gripper_with_axes(vis, grasp, merged_pcds, color)
-    set_camera_view_and_save_image(vis, extrinsic_matrix, os.path.join(save_folder,f"grasp_axes{i}a.png"))
-    set_camera_view_and_save_image(vis, extrinsic_matrix1, os.path.join(save_folder,f"grasp_axes{i}b.png"))
+    set_camera_view_and_save_image(vis, intrinsic, extrinsic_matrix, os.path.join(save_folder,f"grasp_axes{i}a.png"))
+    set_camera_view_and_save_image(vis, intrinsic1, extrinsic_matrix1, os.path.join(save_folder,f"grasp_axes{i}b.png"))
+    set_camera_view_and_save_image(vis, intrinsic2, extrinsic_matrix2, os.path.join(save_folder,f"grasp_axes{i}c.png"))
+    set_camera_view_and_save_image(vis, intrinsic3, extrinsic_matrix3, os.path.join(save_folder,f"grasp_axes{i}d.png"))
 
+def load_intrinsic_matrix(file_path):
+    """Loads the intrinsic matrix from a .npy file."""
+    loaded_data = np.load(file_path, allow_pickle=True).item()
+    width = loaded_data["width"]
+    height = loaded_data["height"]
+    intrinsic_matrix = loaded_data["intrinsic_matrix"]
+    intrinsic = o3d.camera.PinholeCameraIntrinsic(width, height, intrinsic_matrix[0, 0], intrinsic_matrix[1, 1], intrinsic_matrix[0, 2], intrinsic_matrix[1, 2])
+    return intrinsic
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -471,8 +486,16 @@ if __name__ == "__main__":
         print('Predicted grasps:', pred_grasps_cam[True].shape[0])
         extrinsic_matrix = np.load(f"./calib/extrinsic_combined1.npy")
         extrinsic_matrix1 = np.load(f"./calib/extrinsic_combined2.npy")
+        extrinsic_matrix2 = np.load(f"./calib/extrinsic_combined3.npy")
+        extrinsic_matrix3 = np.load(f"./calib/extrinsic_combined4.npy")
+        intrinsic = load_intrinsic_matrix(f"./calib/intrinsic1.npy")
+        intrinsic1 = load_intrinsic_matrix(f"./calib/intrinsic2.npy")
+        intrinsic2 = load_intrinsic_matrix(f"./calib/intrinsic3.npy")
+        intrinsic3 = load_intrinsic_matrix(f"./calib/intrinsic4.npy")
         vis = o3d.visualization.Visualizer()
-        vis.create_window()
+        window_width = 3840
+        window_height = 2160
+        vis.create_window(width=window_width, height=window_height)
         # Visualize all the predicted grasps
         visualize_gripper_with_cylinders(vis, pred_grasps_cam[True], merged_pcd, connections, [[0, 0, 0] for _ in range(pred_grasps_cam[True].shape[0])])
         semantic_waypoint = streamers[0].deproject_pixel(pixels[0], depth_frames[0])
@@ -486,7 +509,7 @@ if __name__ == "__main__":
         origin = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
         vis.add_geometry(origin)
         vis.run()
-        set_camera_view_and_save_image(vis, extrinsic_matrix, os.path.join(full_save_folder, F"pred_grasp_lines_w_gaze.png"))  
+        set_camera_view_and_save_image(vis, intrinsic, extrinsic_matrix, os.path.join(full_save_folder, F"pred_grasp_lines_w_gaze.png"))  
         
         # Select the options for VLM
         distinct_grasps, distinct_openings = find_distinct_grasps(pred_grasps_cam, pred_gripper_openings, semantic_waypoint, n_grasps=3, max_distance=0.2)
@@ -536,11 +559,13 @@ if __name__ == "__main__":
         robot.move_to_ee_pose(position_fingertip, [roll, pitch, yaw])
         robot.move_to_ee_pose(position_ee, [roll, pitch, yaw])
         robot.grasp(openings[-1])
-        time.sleep(0.5)
-        robot.go_home()
-        robot.move_to_ee_pose(place_ee, np.array([-180, 0, 0]))
+        time.sleep(0.8)
+        #robot.go_home()
+        robot.move_to_ee_pose(np.array([475, 0, 245]), [roll, pitch, yaw])
+        #robot.move_to_ee_pose(place_ee, np.array([-180, 0, 0]))
+        robot.move_to_ee_pose(place_ee, [roll, pitch, yaw])
         robot.grasp(None)
-        time.sleep(0.5)
+        time.sleep(0.8)
         robot.go_home()
 
 

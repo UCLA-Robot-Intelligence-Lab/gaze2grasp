@@ -25,8 +25,12 @@ print("  Extrinsic:")
 print(pinhole_camera_parameters.extrinsic)
 
 extrinsic = pinhole_camera_parameters.extrinsic
-
+intrinsic_data = {
+    "width": pinhole_camera_parameters.intrinsic.width,
+    "height": pinhole_camera_parameters.intrinsic.height,
+    "intrinsic_matrix": np.asarray(pinhole_camera_parameters.intrinsic.intrinsic_matrix)
+}
 # Save the extrinsic matrix as a .npy file
-np.save("./calib/extrinsic_combined2.npy", pinhole_camera_parameters.extrinsic)
+np.save("./calib/extrinsic_combined4.npy", pinhole_camera_parameters.extrinsic)
+np.save("./calib/intrinsic4.npy", intrinsic_data)
 
-print("Extrinsic matrix saved to extrinsic_combined2.npy")

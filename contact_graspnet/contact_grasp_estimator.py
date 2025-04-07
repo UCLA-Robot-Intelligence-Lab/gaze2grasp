@@ -192,7 +192,7 @@ class GraspEstimator:
             
         return filtered_grasp_idcs
 
-    def extract_3d_cam_boxes(self, full_pc, pc_segments, min_size=0.15, max_size=0.3, max_z_height=0.23):
+    def extract_3d_cam_boxes(self, full_pc, pc_segments, min_size=0.2, max_size=0.3, max_z_height=0.45):
         """
         Extract 3D bounding boxes with a maximum z-height constraint.
 
@@ -566,45 +566,100 @@ class GraspEstimator:
             vis.create_window()
             visualize_zxy_planes_actual_values(pcd_combined)
             vis.destroy_window()
-            #o3d.io.write_point_cloud("combined_pcd.pcd", pcd_combined)
+            o3d.io.write_point_cloud("combined_pcd.pcd", pcd_combined)
             #rot = Rotation.from_euler('xy',[90,-90], degrees=True)
-            rot = Rotation.from_euler('x',180, degrees=True)
-            #print("Rotation matrix:", rot.as_matrix())
-            pc_temp = (rot.as_matrix()@np.asarray(pcd_combined.points).T).T
-            merged_segments[True] = (rot.as_matrix()@merged_segments[True].T).T
-            
-            
+            rot = Rotation.from_euler('x', 120, degrees=True)
+            rot1 = Rotation.from_euler('x', 180, degrees=True)
+            rot2 = Rotation.from_euler('x', -120, degrees=True)  # Example third rotation
+
+            # Calculate inverse rotation matrices
+            rot_inv_matrix = rot.inv().as_matrix()
+            rot1_inv_matrix = rot1.inv().as_matrix()
+            rot2_inv_matrix = rot2.inv().as_matrix()
+
+            # Rotate point clouds and segments
+            pc_temp = (rot.as_matrix() @ np.asarray(pcd_combined.points).T).T
+            merged_segments_temp = (rot.as_matrix() @ merged_segments[True].T).T
+            merged_segments_rotated = {True: merged_segments_temp}
+
+            pc_temp1 = (rot1.as_matrix() @ np.asarray(pcd_combined.points).T).T
+            merged_segments_temp1 = (rot1.as_matrix() @ merged_segments[True].T).T
+            merged_segments_rotated1 = {True: merged_segments_temp1}
+
+            pc_temp2 = (rot2.as_matrix() @ np.asarray(pcd_combined.points).T).T
+            merged_segments_temp2 = (rot2.as_matrix() @ merged_segments[True].T).T
+            merged_segments_rotated2 = {True: merged_segments_temp2}
+
+
+            # Visualize (optional, for debugging)
             pcd_temp = o3d.geometry.PointCloud()
             pcd_temp.points = o3d.utility.Vector3dVector(pc_temp)
+            pcd_temp1 = o3d.geometry.PointCloud()
+            pcd_temp1.points = o3d.utility.Vector3dVector(pc_temp1)
+            pcd_temp2 = o3d.geometry.PointCloud()
+            pcd_temp2.points = o3d.utility.Vector3dVector(pc_temp2)
             vis = o3d.visualization.Visualizer()
             vis.create_window()
             vis.add_geometry(pcd_combined)
             vis.add_geometry(pcd_temp)
+            vis.add_geometry(pcd_temp1)
+            vis.add_geometry(pcd_temp2)
             origin = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
             vis.add_geometry(origin)
             vis.run()
             vis.destroy_window()
-            pred_grasps_cam, scores, contact_pts, gripper_openings = self.predict_scene_grasps(sess, pc_temp, merged_segments, local_regions=local_regions, filter_grasps=filter_grasps, forward_passes=forward_passes)
-            rot_inv_matrix = rot.inv().as_matrix()
-            #print("Inv_Rotation matrix:", rot_inv_matrix)
 
-            # Assuming pred_grasps_cam[True] is a (N, 4, 4) array
-            num_grasps = pred_grasps_cam[True].shape[0]
-            rotated_grasps = np.zeros_like(pred_grasps_cam[True])
+            # Predict grasps in the rotated frames
+            pred_grasps_cam, scores, contact_pts, gripper_openings = self.predict_scene_grasps(
+                sess, pc_temp, merged_segments_rotated, local_regions=local_regions, filter_grasps=filter_grasps, forward_passes=forward_passes
+            )
+            pred_grasps_cam1, scores1, contact_pts1, gripper_openings1 = self.predict_scene_grasps(
+                sess, pc_temp1, merged_segments_rotated1, local_regions=local_regions, filter_grasps=filter_grasps, forward_passes=forward_passes
+            )
+            pred_grasps_cam2, scores2, contact_pts2, gripper_openings2 = self.predict_scene_grasps(
+                sess, pc_temp2, merged_segments_rotated2, local_regions=local_regions, filter_grasps=filter_grasps, forward_passes=forward_passes
+            )
 
-            for i in range(num_grasps):
-                # Apply rotation to the 3x3 rotation part of the grasp
-                rotated_grasps[i, :3, :3] = rot_inv_matrix @ pred_grasps_cam[True][i, :3, :3]
-                # Copy the translation part
-                rotated_grasps[i, :3, 3] = rot_inv_matrix @ pred_grasps_cam[True][i, :3, 3]
-                # Copy the last row
-                rotated_grasps[i, 3, :] = pred_grasps_cam[True][i, 3, :]
-            #print("Grasp before rotation:", pred_grasps_cam[True][0])
-            pred_grasps_cam[True] = rotated_grasps
+            # Efficiently un-rotate the predicted grasps
+            grasps1 = pred_grasps_cam[True]
+            grasps2 = pred_grasps_cam1[True]
+            grasps3 = pred_grasps_cam2[True]
+
+            rotated_grasps1 = grasps1.copy()
+            rotated_grasps1[:, :3, :3] = np.einsum('ij,ajk->aik', rot_inv_matrix, grasps1[:, :3, :3])
+            rotated_grasps1[:, :3, 3] = np.einsum('ij,aj->ai', rot_inv_matrix, grasps1[:, :3, 3])
+
+            rotated_grasps2 = grasps2.copy()
+            rotated_grasps2[:, :3, :3] = np.einsum('ij,ajk->aik', rot1_inv_matrix, grasps2[:, :3, :3])
+            rotated_grasps2[:, :3, 3] = np.einsum('ij,aj->ai', rot1_inv_matrix, grasps2[:, :3, 3])
+
+            rotated_grasps3 = grasps3.copy()
+            rotated_grasps3[:, :3, :3] = np.einsum('ij,ajk->aik', rot2_inv_matrix, grasps3[:, :3, :3])
+            rotated_grasps3[:, :3, 3] = np.einsum('ij,aj->ai', rot2_inv_matrix, grasps3[:, :3, 3])
+
+            all_rotated_grasps = np.concatenate([rotated_grasps1, rotated_grasps2, rotated_grasps3])
+            pred_grasps_cam[True] = all_rotated_grasps
+
+            # Un-rotate scores
+            all_scores = np.concatenate([scores[True], scores1[True], scores2[True]])
+
+            # Efficiently un-rotate contact points
+            contact_pts1_array = contact_pts[True]
+            contact_pts2_array = contact_pts1_array.copy()
+            contact_pts3_array = contact_pts1_array.copy() # Assuming you want to un-rotate the same original contact_pts by all three inverse rotations
+
+            rotated_contact_pts1 = np.einsum('ij,aj->ai', rot_inv_matrix, contact_pts1_array)
+            rotated_contact_pts2 = np.einsum('ij,aj->ai', rot1_inv_matrix, contact_pts2_array)
+            rotated_contact_pts3 = np.einsum('ij,aj->ai', rot2_inv_matrix, contact_pts3_array)
+
+            all_rotated_contact_pts = np.concatenate([rotated_contact_pts1, rotated_contact_pts2, rotated_contact_pts3])
+
+            # Un-rotate gripper openings
+            all_gripper_openings = np.concatenate([gripper_openings[True], gripper_openings1[True], gripper_openings2[True]])
             #print("Grasp after rotation:", pred_grasps_cam[True][0])
             #pred_grasps_cam, scores, contact_pts, gripper_openings = self.predict_scene_grasps(sess, np.asarray(pcd_combined.points), merged_segments, local_regions=local_regions, filter_grasps=filter_grasps, forward_passes=forward_passes)
             
-            return pcd_combined, pred_grasps_cam, scores, contact_pts, gripper_openings
+            return pcd_combined, pred_grasps_cam, all_scores, all_rotated_contact_pts, all_gripper_openings
         else:
             print("INVALID K MATRIX INPUT")
             return None
