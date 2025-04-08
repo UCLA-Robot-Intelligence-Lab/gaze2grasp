@@ -77,8 +77,6 @@ class RealsenseStreamer():
 
         # Configure depth and color streams
         self.pipeline = rs.pipeline()
-
-
         self.config = rs.config()
 
         if serial_no is not None:
@@ -138,7 +136,7 @@ class RealsenseStreamer():
         self.hole_filling_filter = rs.hole_filling_filter()
         print("camera started")
 
-    def deproject(self, px, depth_frame):
+    def deproject_pixel(self, px, depth_frame):
         u,v = px
         depth = depth_frame.get_distance(u,v)
         xyz = rs.rs2_deproject_pixel_to_point(self.depth_intrin, [u,v], depth)
@@ -177,10 +175,26 @@ class RealsenseStreamer():
                 continue
         color_image = np.asanyarray(color_frame.get_data())
         depth_frame = self.filter_depth(depth_frame)
-        depth_image = np.asanyarray(self.colorizer.colorize(depth_frame).get_data())
-        return color_frame, color_image, depth_frame, depth_image
+        depth_image = np.asanyarray(depth_frame.get_data())
+        h, w = depth_image.shape
+        u, v = np.meshgrid(np.arange(w), np.arange(h))
+        u = u.flatten()
+        v = v.flatten()
+
+        # Compute 3D points for valid pixels
+        points_3d = []
+        for u_pixel, v_pixel in zip(u, v):
+            point_3d = self.deproject_pixel((u_pixel, v_pixel), depth_frame)
+            points_3d.append(np.array(point_3d))
+        points_3d = np.array(points_3d)
+        #print(points_3d.shape)
+        #points_3d = np.vstack((points_3d, np.ones([1,points_3d.shape[1]])))
+        #points_3d = ((np.eye(4).dot(points_3d)).T)[:, 0:3]
+        pcd_colors = cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB).reshape(points_3d.shape)/255.
+        
+        return points_3d, pcd_colors, color_frame, color_image, depth_frame, depth_image
     
-    def seg_to_pc(self, segmap):
+    '''def seg_to_pc(self, segmap):
         """
         Convert depth and intrinsics to point cloud and optionally point cloud color
         :param depth: hxw depth map in m
@@ -244,7 +258,7 @@ class RealsenseStreamer():
         
         except Exception as e:
             print(f"Error getting point cloud: {e}")
-            return None, None, depth_frame
+            return None, None, depth_frame'''
 
     def stop_stream(self):
         self.pipeline.stop()
@@ -262,7 +276,7 @@ if __name__ == '__main__':
 
     frames = []
     while True:
-        _, rgb_image, depth_frame, depth_img = realsense_streamer.capture_rgbd()
+        _, _, _, rgb_image, depth_frame, depth_img = realsense_streamer.capture_rgbd()
         cv2.waitKey(1)
         cv2.imshow('img', rgb_image)
         (u,v), vis = marker_search.find_marker(rgb_image)

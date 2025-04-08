@@ -17,6 +17,7 @@ from scipy.spatial.transform import Rotation
 from contact_grasp_estimator import GraspEstimator
 import config_utils
 from multicam import XarmEnv
+from rs_streamer import RealsenseStreamer
 
 tf.disable_eager_execution()
 
@@ -39,134 +40,6 @@ sys.path.append(os.path.join(BASE_DIR))
 
 # Initialize robot
 robot = XarmEnv()
-
-class RealsenseStreamer():
-    def __init__(self, serial_no=None):
-
-        # in-hand : 317222072157
-        # external: 317422075456
-
-        # Configure depth and color streams
-        self.pipeline = rs.pipeline()
-        self.config = rs.config()
-
-        if serial_no is not None:
-            self.config.enable_device(serial_no)
-
-        self.width = 640
-        self.height = 480
-
-        self.config.enable_stream(rs.stream.color, self.width, self.height, rs.format.bgr8, 30)
-        self.config.enable_stream(rs.stream.depth, self.width, self.height, rs.format.z16, 30)
-
-        self.align_to_color = rs.align(rs.stream.color)
-
-        # Start streaming
-        self.pipe_profile = self.pipeline.start(self.config)
-
-        profile = self.pipeline.get_active_profile()
-
-        ## Configure depth sensor settings
-        depth_sensor = profile.get_device().query_sensors()[0]
-        depth_sensor.set_option(rs.option.enable_auto_exposure, 1)
-
-        # DEPTH IMAGE IN MILLIMETERS NOT METERS  
-        depth_sensor.set_option(rs.option.depth_units, 0.001) 
-        
-        preset_range = depth_sensor.get_option_range(rs.option.visual_preset)
-        for i in range(int(preset_range.max)):
-            visualpreset = depth_sensor.get_option_value_description(rs.option.visual_preset,i)
-            if visualpreset == "Default":
-                depth_sensor.set_option(rs.option.visual_preset, i)
-
-        color_sensor = profile.get_device().query_sensors()[1]
-        color_sensor.set_option(rs.option.enable_auto_exposure, 1)
-
-        self.serial_no = serial_no
-
-        if self.serial_no == '317422075456':
-            color_sensor.set_option(rs.option.exposure, 140)
-
-        # Intrinsics & s
-        frames = self.pipeline.wait_for_frames()
-        frames = self.align_to_color.process(frames)
-
-        depth_frame = frames.get_depth_frame()
-        color_frame = frames.get_color_frame()
-        self.depth_intrin = depth_frame.profile.as_video_stream_profile().intrinsics
-        self.color_intrin = color_frame.profile.as_video_stream_profile().intrinsics
-
-        self.depth_to_color_extrin = depth_frame.profile.get_extrinsics_to(color_frame.profile)
-        self.colorizer = rs.colorizer()
-
-        self.K = np.array([[self.depth_intrin.fx, 0, self.depth_intrin.ppx],
-                           [0, self.depth_intrin.fy, self.depth_intrin.ppy],
-                           [0, 0, 1]])
-
-        #self.dec_filter = rs.decimation_filter()
-        #self.spat_filter = rs.spatial_filter()
-        #self.temp_filter = rs.temporal_filter()
-        #self.hole_filling_filter = rs.hole_filling_filter()
-        print("camera started")
-
-    def deproject_pixel(self, px, depth_frame):
-        u,v = px
-        depth = depth_frame.get_distance(u,v)
-        xyz = rs.rs2_deproject_pixel_to_point(self.depth_intrin, [u,v], depth)
-        return xyz
-
-    def capture_rgb(self):
-        color_frame = None
-        while True:
-            frames = self.pipeline.wait_for_frames()
-            color_frame = frames.get_color_frame()
-            if color_frame is not None:
-                color_image = np.asanyarray(color_frame.get_data())
-                break
-        return color_image
-
-    def filter_depth(self, depth_frame):
-        filtered = depth_frame
-        return filtered.as_depth_frame()
-
-    def capture_rgbd(self):
-        frame_error = True
-        while frame_error:
-            try:
-                frames = self.align_to_color.process(frames)  
-                depth_frame = frames.get_depth_frame()
-                color_frame = frames.get_color_frame()
-                frame_error = False
-            except:
-                frames = self.pipeline.wait_for_frames()
-                continue
-        color_image = np.asanyarray(color_frame.get_data())
-        depth_frame = self.filter_depth(depth_frame)
-        depth_image = np.asanyarray(depth_frame.get_data())
-        h, w = depth_image.shape
-        u, v = np.meshgrid(np.arange(w), np.arange(h))
-        u = u.flatten()
-        v = v.flatten()
-
-        # Compute 3D points for valid pixels
-        points_3d = []
-        for u_pixel, v_pixel in zip(u, v):
-            point_3d = self.deproject_pixel((u_pixel, v_pixel), depth_frame)
-            points_3d.append(np.array(point_3d))
-        points_3d = np.array(points_3d)
-        #print(points_3d.shape)
-        #points_3d = np.vstack((points_3d, np.ones([1,points_3d.shape[1]])))
-        #points_3d = ((np.eye(4).dot(points_3d)).T)[:, 0:3]
-        colors = cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB).reshape(points_3d.shape)/255.
-        
-        return points_3d, colors, color_frame, color_image, depth_frame, depth_image
-    
-    def stop_stream(self):
-        self.pipeline.stop()
-
-    def show_image(self, image):
-        cv2.imshow('img', image)
-        cv2.waitKey(0)
 
 class PixelSelector:
     def __init__(self):
@@ -233,6 +106,7 @@ connections = [np.array([
     [5, 3],  # Finger 2 mid to finger 2 tip
     [1, 6]   # Mid point to extension endpoint
 ])]
+
 def ensure_camera_up(R):
     """Ensures the gripper's camera is on the upper side by flipping Z-rotation if needed."""
     gripper_up_dir = R[:, 1]  # Y-axis of the gripper
@@ -426,8 +300,6 @@ def process_grasp(merged_pcds, grasp, save_folder, i, base_link_color, view = Tr
         set_camera_view_and_save_image(vis, intrinsic2, extrinsic_matrix2, os.path.join(save_folder,f"grasp_axes{i}c.png"))
         set_camera_view_and_save_image(vis, intrinsic3, extrinsic_matrix3, os.path.join(save_folder,f"grasp_axes{i}d.png"))
     
-
-
 def load_intrinsic_matrix(file_path):
     """Loads the intrinsic matrix from a .npy file."""
     loaded_data = np.load(file_path, allow_pickle=True).item()
@@ -437,11 +309,69 @@ def load_intrinsic_matrix(file_path):
     intrinsic = o3d.camera.PinholeCameraIntrinsic(width, height, intrinsic_matrix[0, 0], intrinsic_matrix[1, 1], intrinsic_matrix[0, 2], intrinsic_matrix[1, 2])
     return intrinsic
 
+extrinsic_matrix = np.load(f"./calib/extrinsic_combined1.npy")
+extrinsic_matrix1 = np.load(f"./calib/extrinsic_combined2.npy")
+extrinsic_matrix2 = np.load(f"./calib/extrinsic_combined3.npy")
+extrinsic_matrix3 = np.load(f"./calib/extrinsic_combined4.npy")
+intrinsic = load_intrinsic_matrix(f"./calib/intrinsic1.npy")
+intrinsic1 = load_intrinsic_matrix(f"./calib/intrinsic2.npy")
+intrinsic2 = load_intrinsic_matrix(f"./calib/intrinsic3.npy")
+intrinsic3 = load_intrinsic_matrix(f"./calib/intrinsic4.npy")
+
+def generate_and_visualize_grasps():
+    depth_images = np.array(depth_images) / 1000  # Convert list to array first
+    merged_pcd, transformed_pcds, pred_grasps_cam, _, _, pred_gripper_openings = predict_grasps(grasp_estimator, sess, depth_images, np.array(segmented_cam_imgs), np.array([streamers[0].K, streamers[1].K]), np.array([TCR_81, TCR_56]), rgb = realsense_imgs)
+    print('Predicted grasps:', pred_grasps_cam[True].shape[0])
+    distinct_grasps, distinct_openings = find_distinct_grasps(pred_grasps_cam, pred_gripper_openings, semantic_waypoint, n_grasps=3, max_distance=0.2)
+    closest_grasps, closest_opening = find_closest_grasp(pred_grasps_cam, pred_gripper_openings, semantic_waypoint)
+    grasps = distinct_grasps
+    openings = distinct_openings
+    grasps.append(closest_grasps)
+    openings.append(closest_opening)
+    grasps = np.array(grasps)
+    openings = np.array(openings)*1000
+    positions, orientations = [], []
+    for i, grasp in enumerate(grasps):
+        # Visualizing with merged point cloud
+        os.makedirs(os.path.join(full_save_folder, "pcd_combined"), exist_ok=True)
+        process_grasp(merged_pcd, grasp, os.path.join(full_save_folder, "pcd_combined"), i, base_link_color)
+        # Visualizing with individual point cloud
+        os.makedirs(os.path.join(full_save_folder, "pcd81"), exist_ok=True)
+        os.makedirs(os.path.join(full_save_folder, "pcd56"), exist_ok=True)
+        process_grasp(transformed_pcds[0], grasp, os.path.join(full_save_folder, "pcd81"), i, base_link_color, view = "81")
+        process_grasp(transformed_pcds[1], grasp, os.path.join(full_save_folder, "pcd56"), i, base_link_color, view = "56")
+        
+        position_fingertip = 1000 * grasp[:3, 3]
+        position_fingertip[2] = position_fingertip[2]+157
+        rotation_matrix_rob = grasp[:3, :3]
+        rotation_matrix_rob = ensure_camera_up(rotation_matrix_rob)
+        approach_dir_base = rotation_matrix_rob[:, 2]
+        position_ee = position_fingertip + 90.0 * approach_dir_base
+        rot = Rotation.from_matrix(rotation_matrix_rob)
+        [yaw, pitch, roll] = rot.as_euler('ZYX', degrees=True)
+        print("Approach Position (EE Frame): ", position_fingertip)
+        print("Adjusted Position (EE Frame): ", position_ee)
+        print("Orientation (EE Frame): ", [roll, pitch, yaw])
+        positions.append(position_ee)
+        orientations.append([roll, pitch, yaw])
+    # Visualizing all grasps
+    process_grasp(merged_pcd, grasps, os.path.join(full_save_folder, "pcd_combined"), '_all_', base_link_color)
+    process_grasp(transformed_pcds[0], grasps, os.path.join(full_save_folder, "pcd81"), '_all_', base_link_color, view = "81")
+    process_grasp(transformed_pcds[1], grasps, os.path.join(full_save_folder, "pcd56"), '_all_', base_link_color, view = "56")
+
+    # Saving all the data
+    data = np.array(list(zip(grasps, positions, orientations)), dtype=object)
+    np.save(os.path.join(full_save_folder, "grasp_data.npy"), data)
+
+    
+    vis.destroy_window()
+    
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--ckpt_dir', default='checkpoints/scene_test_2048_bs3_hor_sigma_001', help='Log dir [default: checkpoints/scene_test_2048_bs3_hor_sigma_001]')#default='checkpoints/scene_2048_bs3_rad2_32', help='Log dir [default: checkpoints/scene_2048_bs3_rad2_32]') 
-    parser.add_argument('--np_path', default='test_data/7.npy', help='Input data: npz/npy file with keys either "depth" & camera matrix "K" or just point cloud "pc" in meters. Optionally, a 2D "segmap"')
-    parser.add_argument('--png_path', default='', help='Input data: depth map png in meters')
+    #parser.add_argument('--np_path', default='test_data/7.npy', help='Input data: npz/npy file with keys either "depth" & camera matrix "K" or just point cloud "pc" in meters. Optionally, a 2D "segmap"')
+    #parser.add_argument('--png_path', default='', help='Input data: depth map png in meters')
     parser.add_argument('--K', default=None, help='Flat Camera Matrix, pass as "[fx, 0, cx, 0, fy, cy, 0, 0 ,1]"')
     parser.add_argument('--z_range', default=[0.2,1.8], help='Z value threshold to crop the input point cloud')
     parser.add_argument('--local_regions', action='store_true', default=False, help='Crop 3D local regions around given segments.')
@@ -467,7 +397,7 @@ if __name__ == "__main__":
     #print(sess)
     #print('Session created: ', sess.list_devices())
     grasp_estimator.load_weights(sess, saver, FLAGS.ckpt_dir, mode='test')
-    base_link_color = [[1, 0.6, 0.8], [1, 0.5, 0], [0.4, 0, 0.8],  [1, 1, 0]]
+    base_link_color = [[1, 0.6, 0.8],  [1, 1, 0], [1, 0.5, 0], [0.4, 0, 0.8]]
 
     while True:
         base_folder = "vlm_images"
@@ -527,14 +457,7 @@ if __name__ == "__main__":
         depth_images = np.array(depth_images) / 1000  # Convert list to array first
         merged_pcd, transformed_pcds, pred_grasps_cam, _, _, pred_gripper_openings = predict_grasps(grasp_estimator, sess, depth_images, np.array(segmented_cam_imgs), np.array([streamers[0].K, streamers[1].K]), np.array([TCR_81, TCR_56]), rgb = realsense_imgs)
         print('Predicted grasps:', pred_grasps_cam[True].shape[0])
-        extrinsic_matrix = np.load(f"./calib/extrinsic_combined1.npy")
-        extrinsic_matrix1 = np.load(f"./calib/extrinsic_combined2.npy")
-        extrinsic_matrix2 = np.load(f"./calib/extrinsic_combined3.npy")
-        extrinsic_matrix3 = np.load(f"./calib/extrinsic_combined4.npy")
-        intrinsic = load_intrinsic_matrix(f"./calib/intrinsic1.npy")
-        intrinsic1 = load_intrinsic_matrix(f"./calib/intrinsic2.npy")
-        intrinsic2 = load_intrinsic_matrix(f"./calib/intrinsic3.npy")
-        intrinsic3 = load_intrinsic_matrix(f"./calib/intrinsic4.npy")
+        
         vis = o3d.visualization.Visualizer()
         window_width = 4988
         window_height = 2742

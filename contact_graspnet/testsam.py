@@ -30,7 +30,7 @@ frame_size = (frame_width, frame_height)
 # Define the codec and create VideoWriter object
 out = cv2.VideoWriter(output_video_path, cv2.VideoWriter_fourcc(*'XVID'), fps, frame_size)
 for _ in range(600):
-    _, rgb_image, depth_frame, depth_img = realsense_streamer.capture_rgbd()
+    _, _, _, rgb_image, depth_frame, depth_img = realsense_streamer.capture_rgbd()
     cv2.waitKey(1)
     #cv2.imshow('img', rgb_image)
 

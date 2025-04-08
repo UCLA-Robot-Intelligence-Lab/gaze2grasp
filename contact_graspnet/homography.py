@@ -72,7 +72,7 @@ class HomographyManager:
         frames = self.pipeline.wait_for_frames()
          # print('waiting for depth data...')
         for i in range(2):
-            _, color_image, depth_frame, depth_img = self.realsense_streamer.capture_rgbd()
+            points_3d, pcd_colors, _, color_image, depth_frame, depth_img = self.realsense_streamer.capture_rgbd()
         self.depth_frame = depth_frame
         cam_corners, cam_ids = self.detect_aruco_markers(color_image)
 

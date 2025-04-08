@@ -61,7 +61,7 @@ def goto(robot, realsense_streamer, pixel_selector, TCR, refine=False):
     #TCR[2,3] += 20#z
 
     for i in range(5):
-        _, rgb_image, depth_frame, depth_img = realsense_streamer.capture_rgbd()
+        _, _, _, rgb_image, depth_frame, depth_img = realsense_streamer.capture_rgbd()
 
     pixels = pixel_selector.run(rgb_image)
     waypoint_cam = 1000.0*np.array(realsense_streamer.deproject(pixels[0], depth_frame))

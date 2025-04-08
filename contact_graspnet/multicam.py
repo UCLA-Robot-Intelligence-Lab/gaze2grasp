@@ -145,6 +145,19 @@ class XarmEnv:
         else:
             print(f"Target position {position} is out of range")#print(f"Return value from set_servo_cartesian: {ret}")
             return None
+        
+    def y_increase(self):
+        #ret = self.arm.set_servo_cartesian(np.concatenate((position, orietation)), is_radian=False, speed=1, wait=True)
+        position, orietation = self.arm.get_position(is_radian=False)
+        position[1] += 10
+        if is_position_in_range(position):
+            ret = self.arm.set_position(x=position[0], y=position[1], z=position[2], roll=orietation[0], pitch=orietation[1], yaw=orietation[2], speed=200, is_radian=False, wait=True)
+            return ret
+        else:
+            print(f"Target position {position} is out of range")#print(f"Return value from set_servo_cartesian: {ret}")
+            return None
+
+
     '''def pose_ee_radian(self):
         _, initial_pose = self.arm.get_position(is_radian=True)
         current_position = np.array(initial_pose[:3])

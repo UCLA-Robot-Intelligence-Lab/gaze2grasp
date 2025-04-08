@@ -29,7 +29,7 @@ from multicam import XarmEnv
 from calib_utils.rotation_transform import transform_rotation_camera_to_robot_roll_yaw_pitch
 from calib_utils.linalg_utils import transform
 
-
+from live_visualization import capture_and_process_rgbd, process_grasp, 
 import open3d as o3d
 
 physical_devices = tf.config.experimental.list_physical_devices('GPU')
@@ -39,11 +39,14 @@ tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
 GRIPPER_SPEED, GRIPPER_FORCE, GRIPPER_MAX_WIDTH, GRIPPER_TOLERANCE = 0.1, 40, 0.08570, 0.01
 
-serial_no = '317422075456'
-#serial_no = '317422074281'
+SERIAL_NO_81 = '317422074281'  # Camera serial number
+SERIAL_NO_56 = '317422075456'
 
-transforms = np.load(f'calib/transforms_{serial_no}.npy', allow_pickle=True).item()
-TCR = transforms[serial_no]['tcr']
+transforms = np.load('calib/transforms.npy', allow_pickle=True).item()
+TCR_81 = transforms[SERIAL_NO_81]['tcr']
+TCR_56 = transforms[SERIAL_NO_56]['tcr']
+TCR_81[:3, 3] /= 1000.0
+TCR_56[:3, 3] /= 1000.0
 
 robot = XarmEnv()
 
@@ -102,9 +105,6 @@ def display_text(image, text: str, position, color=(0, 0, 255)):
         thickness = 3
     )
 
-
-
-
 def main():
     # file paths to model weights and configuration
     model_weights = f"contact_graspnet/gaze_model/inference/model/pretrained_weights/social_eyes_uncertainty_v1/weights.pth"
@@ -113,7 +113,7 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--ckpt_dir', default='checkpoints/scene_test_2048_bs3_hor_sigma_001', help='Log dir [default: checkpoints/scene_test_2048_bs3_hor_sigma_001]')
-    parser.add_argument('--np_path', default='test_data/0.npy', help='Input data path')
+    #parser.add_argument('--np_path', default='test_data/0.npy', help='Input data path')
     parser.add_argument('--K', default=5, type=int, help='Number of grasps to generate [default: 5]')
     parser.add_argument('--num_samples', default=1024, type=int, help='Number of samples to evaluate during testing, and the number of points in each sample')
     parser.add_argument('--show_non_collision', default=False, action='store_true')
@@ -173,8 +173,8 @@ def main():
 
     global_config = config_utils.load_config(FLAGS.ckpt_dir, batch_size=FLAGS.forward_passes, arg_configs=FLAGS.arg_configs)
 
-    print(str(global_config))
-    print('pid: %s'%(str(os.getpid())))
+    #print(str(global_config))
+    #print('pid: %s'%(str(os.getpid())))
 
     # Instantiate GraspEstimator - this line causes the error.
     grasp_estimator = GraspEstimator(global_config) 
@@ -189,7 +189,7 @@ def main():
     config.gpu_options.allow_growth = True
     config.allow_soft_placement = True
     sess = tf.Session(config=config)
-    print('Session created: ', sess.list_devices())
+    #print('Session created: ', sess.list_devices())
 
     # Load weights
     grasp_estimator.load_weights(sess, saver, 'checkpoints/scene_test_2048_bs3_hor_sigma_001', mode='test')
@@ -208,9 +208,12 @@ def main():
     )
 
     # Initialize Homography Manager
-    homography_manager = HomographyManager(serial_no=serial_no)
+    homography_manager_81 = HomographyManager(serial_no=SERIAL_NO_81)
+    homography_manager_56 = HomographyManager(serial_no=SERIAL_NO_56)
+    homography_manager = [homography_manager_81, homography_manager_56]
     try:
-        homography_manager.start_camera()
+        for i in range(2):
+            homography_manager[i].start_camera()
     except Exception as e:
         print(f"Error starting RealSense camera: {e}")
         # Handle the error appropriately, e.g., continue without homography if needed
@@ -277,7 +280,8 @@ def main():
     rgb_window = "Aria RGB"
     realsense_window = "RealSense ArUco Detection" # New window for RealSense
     seg_window = "Gaze Segmentation (Aria)" # New window for RealSense
-    seg_cam_window = "Gaze Segmentation (Camera)" # New window for RealSense
+    seg_cam_window_81 = "Gaze Segmentation (Camera81)" # New window for RealSense
+    seg_cam_window_56 = "Gaze Segmentation (Camera56)" # New window for RealSense
 
 
     cv2.namedWindow(rgb_window, cv2.WINDOW_NORMAL)
@@ -293,9 +297,13 @@ def main():
     cv2.resizeWindow(seg_window, 640, 480) 
     cv2.moveWindow(seg_window, 1800, 50) 
 
-    cv2.namedWindow(seg_cam_window, cv2.WINDOW_NORMAL) 
-    cv2.resizeWindow(seg_cam_window, 640, 480) 
-    cv2.moveWindow(seg_cam_window, 1800, 1050) 
+    cv2.namedWindow(seg_cam_window_81, cv2.WINDOW_NORMAL) 
+    cv2.resizeWindow(seg_cam_window_81, 640, 480) 
+    cv2.moveWindow(seg_cam_window_81, 1100, 1050) 
+
+    cv2.namedWindow(seg_cam_window_56, cv2.WINDOW_NORMAL) 
+    cv2.resizeWindow(seg_cam_window_56, 640, 480) 
+    cv2.moveWindow(seg_cam_window_56, 1800, 1050) 
 
 
     # 7. Fetch calibration and labels to be passed to 3D -> 2D gaze coordinate casting function
@@ -431,15 +439,19 @@ def main():
                                 print(f"Error displaying segmented image: {e}")
                                 continue
 
-                            mask_pt_cam = []
+                            mask_pt_cam_81 = []
+                            mask_pt_cam_56 = []
                             for mask_point in mask_points:
-                                transformed_x, transformed_y = homography_manager.apply_homography(mask_point)
-                                mask_pt_cam.append([int(np.floor(transformed_x)), int(np.floor(transformed_y))])
-                            print("mask_pt_cam: ", mask_pt_cam)
+                                transformed_x, transformed_y = homography_manager[0].apply_homography(mask_point)
+                                mask_pt_cam_81.append([int(np.floor(transformed_x)), int(np.floor(transformed_y))])
+                                transformed_x, transformed_y = homography_manager[1].apply_homography(mask_point)
+                                mask_pt_cam_56.append([int(np.floor(transformed_x)), int(np.floor(transformed_y))])
+                            print("mask_pt_cam_81: ", mask_pt_cam_81)
+                            print("mask_pt_cam_56: ", mask_pt_cam_56)
                             try:
                                 segmented_cam_img, _ = select_from_sam_everything( #Segments everything and merge masks that is closest to the point prompt
                                                     seg_model,
-                                                    mask_pt_cam,
+                                                    mask_pt_cam_,
                                                     input_img=realsense_image_raw,
                                                     imgsz=640,
                                                     iou=0.9,
