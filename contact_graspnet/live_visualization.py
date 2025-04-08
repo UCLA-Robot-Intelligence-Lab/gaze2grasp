@@ -467,7 +467,7 @@ if __name__ == "__main__":
     #print(sess)
     #print('Session created: ', sess.list_devices())
     grasp_estimator.load_weights(sess, saver, FLAGS.ckpt_dir, mode='test')
-    base_link_color = [[1, 0.6, 0.8], [0.4, 0, 0.8], [1, 0.5, 0], [1, 1, 0]]
+    base_link_color = [[1, 0.6, 0.8], [1, 0.5, 0], [0.4, 0, 0.8],  [1, 1, 0]]
 
     while True:
         base_folder = "vlm_images"
@@ -570,7 +570,8 @@ if __name__ == "__main__":
         positions, orientations = [], []
         for i, grasp in enumerate(grasps):
             # Visualizing with merged point cloud
-            process_grasp(merged_pcd, grasp, full_save_folder, i, base_link_color)
+            os.makedirs(os.path.join(full_save_folder, "pcd_combined"), exist_ok=True)
+            process_grasp(merged_pcd, grasp, os.path.join(full_save_folder, "pcd_combined"), i, base_link_color)
             # Visualizing with individual point cloud
             os.makedirs(os.path.join(full_save_folder, "pcd81"), exist_ok=True)
             os.makedirs(os.path.join(full_save_folder, "pcd56"), exist_ok=True)
@@ -621,7 +622,7 @@ if __name__ == "__main__":
 
 
         # Visualizing all grasps
-        process_grasp(merged_pcd, grasps, full_save_folder, '_all_', base_link_color)
+        process_grasp(merged_pcd, grasps, os.path.join(full_save_folder, "pcd_combined"), '_all_', base_link_color)
         process_grasp(transformed_pcds[0], grasps, os.path.join(full_save_folder, "pcd81"), '_all_', base_link_color, view = "81")
         process_grasp(transformed_pcds[1], grasps, os.path.join(full_save_folder, "pcd56"), '_all_', base_link_color, view = "56")
 
