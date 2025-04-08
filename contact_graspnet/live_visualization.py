@@ -170,6 +170,7 @@ class RealsenseStreamer():
 
 class PixelSelector:
     def __init__(self):
+        self.color_index = 0
         pass
 
     def load_image(self, img, recrop=False):
@@ -186,7 +187,10 @@ class PixelSelector:
         cv2.imshow("pixel_selector", self.img)
         if event == cv2.EVENT_LBUTTONDBLCLK:
             self.clicks.append([x, y])
-            cv2.circle(self.img, (x, y), 3, (255, 255, 0), -1)
+            color_float = base_link_color[self.color_index % len(base_link_color)]
+            color_to_use = tuple(int(c * 255) for c in reversed(color_float)) # Reversed for BGR
+            cv2.circle(self.img, (x, y), 3, color_to_use, -1)
+            self.color_index += 1
 
     def run(self, img):
         self.load_image(img)
@@ -197,15 +201,15 @@ class PixelSelector:
             k = cv2.waitKey(20) & 0xFF
             if k == 27:
                 break
-        return self.clicks
+        return self.clicks, self.img
     
 gripper_control_points = np.array([
     [0, 0, -0.157],  # Base point
     [0, 0, -0.005],   # Mid point
-    [0, 0.02, 0.035], # Finger 1 tip
-    [0, -0.02, 0.035], # Finger 2 tip
-    [0, 0.02, 0],     # Finger 1 mid
-    [0, -0.02, 0],    # Finger 2 mid
+    [0, 0.025, 0.035], # Finger 1 tip
+    [0, -0.025, 0.035], # Finger 2 tip
+    [0, 0.025, 0],     # Finger 1 mid
+    [0, -0.025, 0],    # Finger 2 mid
     [0, 0, 0.05]       # Extension endpoint 
 ])
 
@@ -365,31 +369,64 @@ def set_camera_view_and_save_image(vis, intrinsic, extrinsic_matrix, output_file
     float_buffer = vis.capture_screen_float_buffer()
     float_array = np.asarray(float_buffer)
     image_array = (255.0 * float_array).astype(np.uint8)
-    cv2.imwrite(output_filename, cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR))
+    height, width, _ = image_array.shape
 
-def process_grasp(merged_pcds, grasp, save_folder, i, base_link_color):
+    crop_height = 480
+    crop_width = 854
+
+    center_y = height // 2
+    center_x = width // 2
+
+    ymin = center_y - crop_height // 2
+    ymax = center_y + crop_height // 2
+    xmin = center_x - crop_width // 2
+    xmax = center_x + crop_width // 2
+
+    ymin = max(0, ymin)
+    ymax = min(height, ymax)
+    xmin = max(0, xmin)
+    xmax = min(width, xmax)
+
+    cropped_image_array = image_array[ymin:ymax, xmin:xmax]
+
+    cv2.imwrite(output_filename, cv2.cvtColor(cropped_image_array, cv2.COLOR_RGB2BGR))
+
+def process_grasp(merged_pcds, grasp, save_folder, i, base_link_color, view = True):
     # Visualize and save gripper with cylinders
     if type(i) != int:
         color = base_link_color
     else:
         color = base_link_color[i]
-    visualize_gripper_with_cylinders(vis, grasp, merged_pcds, connections, color)
-    set_camera_view_and_save_image(vis, intrinsic, extrinsic_matrix, os.path.join(save_folder, f"grasp_lines{i}a.png"))
-    set_camera_view_and_save_image(vis, intrinsic1, extrinsic_matrix1, os.path.join(save_folder, f"grasp_lines{i}b.png"))
-    set_camera_view_and_save_image(vis, intrinsic2, extrinsic_matrix2, os.path.join(save_folder, f"grasp_lines{i}c.png"))
-    set_camera_view_and_save_image(vis, intrinsic3, extrinsic_matrix3, os.path.join(save_folder, f"grasp_lines{i}d.png"))
+    if view == "81":
+        visualize_gripper_with_cylinders(vis, grasp, merged_pcds, connections, color)
+        set_camera_view_and_save_image(vis, intrinsic2, extrinsic_matrix2, os.path.join(save_folder, f"grasp_lines{i}.png"))
+        visualize_gripper_with_axes(vis, grasp, merged_pcds, color)
+        set_camera_view_and_save_image(vis, intrinsic2, extrinsic_matrix2, os.path.join(save_folder,f"grasp_axes{i}.png"))
+    elif view == "56":
+        visualize_gripper_with_cylinders(vis, grasp, merged_pcds, connections, color)
+        set_camera_view_and_save_image(vis, intrinsic3, extrinsic_matrix3, os.path.join(save_folder, f"grasp_lines{i}.png"))
+        visualize_gripper_with_axes(vis, grasp, merged_pcds, color)
+        set_camera_view_and_save_image(vis, intrinsic3, extrinsic_matrix3, os.path.join(save_folder,f"grasp_axes{i}.png"))
+    else:
+        visualize_gripper_with_cylinders(vis, grasp, merged_pcds, connections, color)
+        set_camera_view_and_save_image(vis, intrinsic, extrinsic_matrix, os.path.join(save_folder, f"grasp_lines{i}a.png"))
+        set_camera_view_and_save_image(vis, intrinsic1, extrinsic_matrix1, os.path.join(save_folder, f"grasp_lines{i}b.png"))
+        set_camera_view_and_save_image(vis, intrinsic2, extrinsic_matrix2, os.path.join(save_folder, f"grasp_lines{i}c.png"))
+        set_camera_view_and_save_image(vis, intrinsic3, extrinsic_matrix3, os.path.join(save_folder, f"grasp_lines{i}d.png"))
 
-    # Visualize and save gripper with arm
-    #visualize_gripper_with_arm(vis, grasp, merged_pcds, color)
-    #set_camera_view_and_save_image(vis, extrinsic_matrix, os.path.join(save_folder,f"grasp_arm{i}a.png"))
-    #set_camera_view_and_save_image(vis, extrinsic_matrix1, os.path.join(save_folder,f"grasp_arm{i}b.png"))
+        # Visualize and save gripper with arm
+        #visualize_gripper_with_arm(vis, grasp, merged_pcds, color)
+        #set_camera_view_and_save_image(vis, extrinsic_matrix, os.path.join(save_folder,f"grasp_arm{i}a.png"))
+        #set_camera_view_and_save_image(vis, extrinsic_matrix1, os.path.join(save_folder,f"grasp_arm{i}b.png"))
 
-    # Visualize and save gripper with axes
-    visualize_gripper_with_axes(vis, grasp, merged_pcds, color)
-    set_camera_view_and_save_image(vis, intrinsic, extrinsic_matrix, os.path.join(save_folder,f"grasp_axes{i}a.png"))
-    set_camera_view_and_save_image(vis, intrinsic1, extrinsic_matrix1, os.path.join(save_folder,f"grasp_axes{i}b.png"))
-    set_camera_view_and_save_image(vis, intrinsic2, extrinsic_matrix2, os.path.join(save_folder,f"grasp_axes{i}c.png"))
-    set_camera_view_and_save_image(vis, intrinsic3, extrinsic_matrix3, os.path.join(save_folder,f"grasp_axes{i}d.png"))
+        # Visualize and save gripper with axes
+        visualize_gripper_with_axes(vis, grasp, merged_pcds, color)
+        set_camera_view_and_save_image(vis, intrinsic, extrinsic_matrix, os.path.join(save_folder,f"grasp_axes{i}a.png"))
+        set_camera_view_and_save_image(vis, intrinsic1, extrinsic_matrix1, os.path.join(save_folder,f"grasp_axes{i}b.png"))
+        set_camera_view_and_save_image(vis, intrinsic2, extrinsic_matrix2, os.path.join(save_folder,f"grasp_axes{i}c.png"))
+        set_camera_view_and_save_image(vis, intrinsic3, extrinsic_matrix3, os.path.join(save_folder,f"grasp_axes{i}d.png"))
+    
+
 
 def load_intrinsic_matrix(file_path):
     """Loads the intrinsic matrix from a .npy file."""
@@ -430,21 +467,9 @@ if __name__ == "__main__":
     #print(sess)
     #print('Session created: ', sess.list_devices())
     grasp_estimator.load_weights(sess, saver, FLAGS.ckpt_dir, mode='test')
+    base_link_color = [[1, 0.6, 0.8], [0.4, 0, 0.8], [1, 0.5, 0], [1, 1, 0]]
 
     while True:
-        streamers = [realsense_streamer_81, realsense_streamer_56]
-        results = [capture_and_process_rgbd(streamer) for streamer in streamers]
-        pcds, realsense_imgs, depth_frames, depth_images = zip(*results)
-        pcds, realsense_imgs, depth_frames, depth_images = np.array(pcds), np.array(realsense_imgs), np.array(depth_frames), np.array(depth_images)
-        pixel_selector_81 = PixelSelector()
-        pixel_selector_56 = PixelSelector()
-        pixels_81 = pixel_selector_81.run(realsense_imgs[0])
-        print(pixels_81)
-        pixels_56 = pixel_selector_56.run(realsense_imgs[1])
-        print(pixels_56)
-        pixels = pixels_81
-        pixels.extend(pixels_56)
-        print(pixels)
         base_folder = "vlm_images"
         while True:
             save_folder = input(f"Enter the folder name to save results (will be saved inside '{base_folder}'): ").strip()
@@ -458,6 +483,24 @@ if __name__ == "__main__":
         print(f"Data will be saved in {full_save_folder}")
 
         os.makedirs('results', exist_ok=True)
+        streamers = [realsense_streamer_81, realsense_streamer_56]
+        results = [capture_and_process_rgbd(streamer) for streamer in streamers]
+        pcds, realsense_imgs, depth_frames, depth_images = zip(*results)
+        pcds, realsense_imgs, depth_frames, depth_images = np.array(pcds), np.array(realsense_imgs), np.array(depth_frames), np.array(depth_images)
+        pixel_selector_81 = PixelSelector()
+        pixel_selector_56 = PixelSelector()
+        pixels_81, img_81 = pixel_selector_81.run(realsense_imgs[0])
+        print(pixels_81)
+        cv2.imwrite(os.path.join(full_save_folder, f"cam81.png"), (img_81))
+
+        pixels_56, img_56 = pixel_selector_56.run(realsense_imgs[1])
+        print(pixels_56)
+        cv2.imwrite(os.path.join(full_save_folder, f"cam56.png"), (img_56))
+
+        pixels = pixels_81
+        pixels.extend(pixels_56)
+        print(pixels)
+        
         cv2.namedWindow("Gaze Segmentation (Camera 81)", cv2.WINDOW_NORMAL)
         cv2.resizeWindow("Gaze Segmentation (Camera 81)", 640, 480)
         cv2.moveWindow("Gaze Segmentation (Camera 81)", 1800, 1050)
@@ -482,7 +525,7 @@ if __name__ == "__main__":
 
 
         depth_images = np.array(depth_images) / 1000  # Convert list to array first
-        merged_pcd, pred_grasps_cam, _, _, pred_gripper_openings = predict_grasps(grasp_estimator, sess, depth_images, np.array(segmented_cam_imgs), np.array([streamers[0].K, streamers[1].K]), np.array([TCR_81, TCR_56]), rgb = realsense_imgs)
+        merged_pcd, transformed_pcds, pred_grasps_cam, _, _, pred_gripper_openings = predict_grasps(grasp_estimator, sess, depth_images, np.array(segmented_cam_imgs), np.array([streamers[0].K, streamers[1].K]), np.array([TCR_81, TCR_56]), rgb = realsense_imgs)
         print('Predicted grasps:', pred_grasps_cam[True].shape[0])
         extrinsic_matrix = np.load(f"./calib/extrinsic_combined1.npy")
         extrinsic_matrix1 = np.load(f"./calib/extrinsic_combined2.npy")
@@ -493,9 +536,10 @@ if __name__ == "__main__":
         intrinsic2 = load_intrinsic_matrix(f"./calib/intrinsic3.npy")
         intrinsic3 = load_intrinsic_matrix(f"./calib/intrinsic4.npy")
         vis = o3d.visualization.Visualizer()
-        window_width = 3840
-        window_height = 2160
+        window_width = 4988
+        window_height = 2742
         vis.create_window(width=window_width, height=window_height)
+        #vis.create_window()
         # Visualize all the predicted grasps
         visualize_gripper_with_cylinders(vis, pred_grasps_cam[True], merged_pcd, connections, [[0, 0, 0] for _ in range(pred_grasps_cam[True].shape[0])])
         semantic_waypoint = streamers[0].deproject_pixel(pixels[0], depth_frames[0])
@@ -523,10 +567,16 @@ if __name__ == "__main__":
         print(openings)
 
         # Visualizing single grasps
-        base_link_color = [[1, 0.6, 0.8], [0.4, 0, 0.8], [1, 0.5, 0], [1, 1, 0]]
         positions, orientations = [], []
         for i, grasp in enumerate(grasps):
+            # Visualizing with merged point cloud
             process_grasp(merged_pcd, grasp, full_save_folder, i, base_link_color)
+            # Visualizing with individual point cloud
+            os.makedirs(os.path.join(full_save_folder, "pcd81"), exist_ok=True)
+            os.makedirs(os.path.join(full_save_folder, "pcd56"), exist_ok=True)
+            process_grasp(transformed_pcds[0], grasp, os.path.join(full_save_folder, "pcd81"), i, base_link_color, view = "81")
+            process_grasp(transformed_pcds[1], grasp, os.path.join(full_save_folder, "pcd56"), i, base_link_color, view = "56")
+            
 
             # Move robot to the grasp pose
             print("Moving to pose")
@@ -543,6 +593,7 @@ if __name__ == "__main__":
             position_ee = position_fingertip + 90.0 * approach_dir_base
             rot = Rotation.from_matrix(rotation_matrix_rob)
             [yaw, pitch, roll] = rot.as_euler('ZYX', degrees=True)
+            print("Approach Position (EE Frame): ", position_fingertip)
             print("Adjusted Position (EE Frame): ", position_ee)
             print("Orientation (EE Frame): ", [roll, pitch, yaw])
             positions.append(position_ee)
@@ -559,18 +610,20 @@ if __name__ == "__main__":
         robot.move_to_ee_pose(position_fingertip, [roll, pitch, yaw])
         robot.move_to_ee_pose(position_ee, [roll, pitch, yaw])
         robot.grasp(openings[-1])
-        time.sleep(0.8)
+        time.sleep(1)
         #robot.go_home()
         robot.move_to_ee_pose(np.array([475, 0, 245]), [roll, pitch, yaw])
         #robot.move_to_ee_pose(place_ee, np.array([-180, 0, 0]))
         robot.move_to_ee_pose(place_ee, [roll, pitch, yaw])
         robot.grasp(None)
-        time.sleep(0.8)
+        time.sleep(1)
         robot.go_home()
 
 
         # Visualizing all grasps
         process_grasp(merged_pcd, grasps, full_save_folder, '_all_', base_link_color)
+        process_grasp(transformed_pcds[0], grasps, os.path.join(full_save_folder, "pcd81"), '_all_', base_link_color, view = "81")
+        process_grasp(transformed_pcds[1], grasps, os.path.join(full_save_folder, "pcd56"), '_all_', base_link_color, view = "56")
 
         # Saving all the data
         data = np.array(list(zip(grasps, positions, orientations)), dtype=object)
