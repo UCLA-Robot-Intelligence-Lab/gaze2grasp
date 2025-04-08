@@ -528,7 +528,7 @@ class GraspEstimator:
                 
                 # Apply inverse rotation to orientation
             #    grasp[:3, :3] = R_inv @ grasp[:3, :3]
-            return pcd, pred_grasps_cam, scores, contact_pts, gripper_openings
+            return pcd, pcd, pred_grasps_cam, scores, contact_pts, gripper_openings
         elif len(depth.shape) == 3 and len(segmap.shape) == 3 and len(K.shape) == 3 and len(TCR.shape) == 3:
             print("MERGING POINT CLOUDS FOR CONTACT_GRASPNET_PRED")
             merged_segments, pcds= {}, []
@@ -556,6 +556,7 @@ class GraspEstimator:
                 pcd = o3d.geometry.PointCloud()
                 pcd.points = o3d.utility.Vector3dVector(points_3d_transformed)
                 pcd.colors = o3d.utility.Vector3dVector(pc_color/255)
+                #o3d.io.write_point_cloud(f"{i}.pcd", pcd)
                 pcds.append(pcd)
             pcd_combined = o3d.geometry.PointCloud()
             for pcd in pcds:
@@ -566,7 +567,7 @@ class GraspEstimator:
             vis.create_window()
             visualize_zxy_planes_actual_values(pcd_combined)
             vis.destroy_window()
-            o3d.io.write_point_cloud("combined_pcd.pcd", pcd_combined)
+            #o3d.io.write_point_cloud("combined_pcd.pcd", pcd_combined)
             #rot = Rotation.from_euler('xy',[90,-90], degrees=True)
             rot = Rotation.from_euler('x', 120, degrees=True)
             rot1 = Rotation.from_euler('x', 180, degrees=True)
@@ -659,7 +660,7 @@ class GraspEstimator:
             #print("Grasp after rotation:", pred_grasps_cam[True][0])
             #pred_grasps_cam, scores, contact_pts, gripper_openings = self.predict_scene_grasps(sess, np.asarray(pcd_combined.points), merged_segments, local_regions=local_regions, filter_grasps=filter_grasps, forward_passes=forward_passes)
             
-            return pcd_combined, pred_grasps_cam, all_scores, all_rotated_contact_pts, all_gripper_openings
+            return pcd_combined, pcds, pred_grasps_cam, all_scores, all_rotated_contact_pts, all_gripper_openings
         else:
             print("INVALID K MATRIX INPUT")
             return None
