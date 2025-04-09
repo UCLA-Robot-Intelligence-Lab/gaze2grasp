@@ -11,10 +11,10 @@ from rs_streamer import RealsenseStreamer, MarkSearch
 import torch
 import os
 import numpy as np
-
+import open3d as o3d
 from scipy.spatial.transform import Rotation as R
 import time
-
+from pc_utils import merge_pcls
 from rs_streamer import RealsenseStreamer, MarkSearch
 from calib_utils.solver import Solver
 
@@ -110,8 +110,6 @@ class XarmEnv:
 
 
     def grasp(self, grasp):
-        #0 is open
-        #1 is closed
         gripper_open = 800
         gripper_closed = 75
         if grasp == None:
@@ -125,104 +123,19 @@ class XarmEnv:
             if ret != 0:
                 print(f"Error in set_gripper_position (open): {ret}")
 
-
     def go_home(self):
         self.arm.set_mode(0)
         self.arm.set_state(state=0)
         self.arm.set_servo_angle(angle=[0, 0, 0, 105, 0, 105, 0], speed=50, wait=True)
-        #print('homing', self.pose_ee_radian())
-        #curr quat [  -0.016411    -0.37785     0.92533   -0.026844]
-        #pos, orientation = (array([     475.73,      1.4586,       416.7]), array([     179.13,   -0.010084,     0.77567]))
-
-
-    
-
+        
     def move_to_ee_pose(self,position,orietation,within_bounds = True):
-        #ret = self.arm.set_servo_cartesian(np.concatenate((position, orietation)), is_radian=False, speed=1, wait=True)
         if is_position_in_range(position):
             ret = self.arm.set_position(x=position[0], y=position[1], z=position[2], roll=orietation[0], pitch=orietation[1], yaw=orietation[2], speed=200, is_radian=False, wait=True)
             return ret
         else:
-            print(f"Target position {position} is out of range")#print(f"Return value from set_servo_cartesian: {ret}")
+            print(f"Target position {position} is out of range")
             return None
         
-    def y_increase(self):
-        #ret = self.arm.set_servo_cartesian(np.concatenate((position, orietation)), is_radian=False, speed=1, wait=True)
-        position, orietation = self.arm.get_position(is_radian=False)
-        position[1] += 10
-        if is_position_in_range(position):
-            ret = self.arm.set_position(x=position[0], y=position[1], z=position[2], roll=orietation[0], pitch=orietation[1], yaw=orietation[2], speed=200, is_radian=False, wait=True)
-            return ret
-        else:
-            print(f"Target position {position} is out of range")#print(f"Return value from set_servo_cartesian: {ret}")
-            return None
-
-
-    '''def pose_ee_radian(self):
-        _, initial_pose = self.arm.get_position(is_radian=True)
-        current_position = np.array(initial_pose[:3])
-        current_orientation = np.array(initial_pose[3:])
-        rot = R.from_euler('zyx', current_orientation)
-        quat = rot.as_quat()
-        print('curr quat', quat)
-        #print(initial_pose)
-        return current_position, current_orientation
-    
-        
-    def pose_ee(self):
-        _, initial_pose = self.arm.get_position(is_radian=False)
-        current_position = np.array(initial_pose[:3])
-        current_orientation = np.array(initial_pose[3:])
-        rot = R.from_euler('zyx', current_orientation)
-        quat = rot.as_quat()
-        print('curr quat', quat)
-        #print(initial_pose)
-        return current_position, current_orientation
-
-    def move_to_ee_pose_radian(self,position,orietation, is_quat=False):
-        #orietation = np.array([ 0.8509035, 0, 0, 0.525322 ])
-        if is_quat:
-            quat_ori = orietation
-            rot = R.from_quat(quat_ori)
-            orietation = rot.as_rotvec()
-            #print(orietation)
-        else:
-            orietation = R.from_euler('zyx', orietation)
-            orietation = orietation.as_rotvec()
-        #ret = self.arm.set_servo_cartesian(np.concatenate((position, orietation)), is_radian=False, speed=1, wait=True)
-        ret = self.arm.set_position(x=position[0], y=position[1], z=position[2], roll=orietation[0], pitch=orietation[1], yaw=orietation[2], speed=200, is_radian=True, wait=True)
-        #print(f"Return value from set_servo_cartesian: {ret}")
-        return ret, orietation
-    
-
-    def robot_fingertip_pos_to_ee(self,position,quat_orietation):
-
-        HOME_QUAT = np.array([ -0.0,    -0.0,    1.0,   -0.0]) #[ 0.9367,  0.3474, -0.0088, -0.0433])
-        FINGERTIP_OFFSET = np.array([0, 0, -15]) 
-        home_euler = R.from_quat(HOME_QUAT).as_euler('zyx')
-
-        ee_euler = R.from_quat(quat_orietation).as_euler('zyx')
-
-        offset_euler = ee_euler - home_euler
-
-        fingertip_offset_euler = offset_euler * [-1,1,1]
-        fingertip_transf = R.from_euler('zyx', fingertip_offset_euler)
-        fingertip_offset = fingertip_transf.as_matrix() @ FINGERTIP_OFFSET
-        #fingertip_offset[2] -= 0.9*FINGERTIP_OFFSET[2]
-        fingertip_offset[2] -= FINGERTIP_OFFSET[2]
-
-        ee_pos = position - fingertip_offset
-        return ee_pos, ee_euler
-    
-    def move_to_fingertip_pose(self,position,quat_orietation):
-        #quat_orietation=np.array([ 0.8509035, 0, 0, 0.525322 ])
-        ee_pos, ee_euler = self.robot_fingertip_pos_to_ee(position,quat_orietation)
-        
-        self.move_to_ee_pose_radian(ee_pos, ee_euler)
-        return ee_euler
-        '''
-
-
 class MultiCam:
     def __init__(self, serial_nos):
         self.cameras = []
@@ -240,94 +153,84 @@ class MultiCam:
         else:
             self.icp_tf = None
 
-
-    #def project_fingertip_pos(self, fingertip_pos):
-    #    waypoints_proj = {cam.serial_no:None for cam in self.cameras}
-    #    for cam in self.cameras:
-    #        tcr = self.transforms[cam.serial_no]['tcr']
-    #        tf = np.linalg.inv(np.vstack((tcr, np.array([0,0,0,1]))))[:3]
-    #        pixel = project(fingertip_pos, cam.K, tf)
-    #        waypoints_proj[cam.serial_no] = pixel
-    #    return waypoints_proj
-    
-
-    def crop(self, pcd, min_bound=[0.2,-0.35,0.10], max_bound=[0.9, 0.3, 0.5]): # what primitives were trained on
-    #def crop(self, pcd, min_bound=[0.2,-0.35,0.09], max_bound=[0.9, 0.3, 0.5]):
+    def crop(self, pcd, min_bound=[0.2,-0.35,0.10], max_bound=[0.9, 0.3, 0.5]): 
         idxs = np.logical_and(np.logical_and(
                       np.logical_and(pcd[:,0] > min_bound[0], pcd[:,0] < max_bound[0]),
                       np.logical_and(pcd[:,1] > min_bound[1], pcd[:,1] < max_bound[1])),
                       np.logical_and(pcd[:,2] > min_bound[2], pcd[:,2] < max_bound[2]))
         return idxs
 
-    def take_rgb(self, visualize=True):
-        rgb_images = {cam.serial_no:None for cam in self.cameras}
-        for idx, cam in enumerate(self.cameras):
-            _, rgb_image, depth_frame, depth_img_vis = cam.capture_rgbd()
-            rgb_images[cam.serial_no] = rgb_image
-        return rgb_images
-
-    '''def take_rgbd(self, visualize=True):
-        rgb_images = {cam.serial_no:None for cam in self.cameras}
-        depth_images = {cam.serial_no:None for cam in self.cameras}
+    def take_rgbd_mm(self, visualize=True):
+        rgb_images = {cam.serial_no: None for cam in self.cameras}
+        depth_images = {cam.serial_no: None for cam in self.cameras}
 
         merged_points = []
         merged_colors = []
 
-
         icp_tfs = []
         cam_ids = []
+
         for idx, cam in enumerate(self.cameras):
-
             _, rgb_image, depth_frame, depth_img_vis = cam.capture_rgbd()
-
-            rgb_images[cam.serial_no] = rgb_image
-
-            depth_img = np.asanyarray(depth_frame.get_data())
-            #denoised_idxs = denoise(depth_img)
-
-            depth_images[cam.serial_no] = depth_img
-
+            depth_img = np.asarray(depth_frame.get_data())
+            # Load transformation for the camera
             tf = self.transforms[cam.serial_no]['tcr']
 
-            points_3d = deproject(depth_img, cam.K, tf)
-            colors = cv2.cvtColor(rgb_image, cv2.COLOR_BGR2RGB).reshape(points_3d.shape)/255.
+            # Generate pixel coordinates
+            h, w = depth_img.shape
+            u, v = np.meshgrid(np.arange(w), np.arange(h))
+            u = u.flatten()
+            v = v.flatten()
 
-            points_3d = points_3d[denoised_idxs]
-            colors = colors[denoised_idxs]
+            # Compute 3D points for valid pixels
+            points_3d = []
+            for u_pixel, v_pixel in zip(u, v):
+                point_3d = cam.deproject((u_pixel, v_pixel), depth_frame)
+                points_3d.append(np.array(point_3d)*1000) 
+            points_3d = np.array(points_3d)
 
-            idxs = self.crop(points_3d)
-            points_3d = points_3d[idxs]
-            colors = colors[idxs]
+            # Apply transformation to 3D points
+            points_3d_homog = np.vstack((points_3d.T, np.ones((1, points_3d.shape[0]))))  # Shape: (4, N)
+            points_3d_transformed = (tf @ points_3d_homog).T 
+            # Convert colors and normalize
+            colors = cv2.cvtColor(rgb_image, cv2.COLOR_BGR2RGB).reshape(-1, 3) / 255.0
 
-            merged_points.append(points_3d)
+            # Append transformed points and colors
+            merged_points.append(points_3d_transformed)
             merged_colors.append(colors)
+
+            # Visualize individual point cloud (optional)
+            if visualize:
+                o3d_pcd = o3d.geometry.PointCloud()
+                o3d_pcd.points = o3d.utility.Vector3dVector(points_3d_transformed)
+                o3d_pcd.colors = o3d.utility.Vector3dVector(colors)
+                o3d.visualization.draw_geometries([o3d_pcd])
+                o3d.io.write_point_cloud(f"pc_{idx}.pcd", o3d_pcd)
 
             if idx > 0:
                 cam_ids.append(cam.serial_no)
                 if self.icp_tf is not None:
                     icp_tfs.append(self.icp_tf[cam.serial_no])
-
+        
+        # Merge point clouds
         pcd_merged = merge_pcls(merged_points, merged_colors, tfs=icp_tfs, cam_ids=cam_ids, visualize=visualize)
         return rgb_images, depth_images, pcd_merged
 
-'''
-
-    def calibrate_cam(self, robot=None):
+    def calibrate_cam_mm(self, robot=None):
         if not os.path.exists('calib'):
             os.mkdir('calib')
             curr_calib = {}
         else:
             curr_calib = np.load('calib/transforms.npy', allow_pickle=True).item()
-
         self.marker_search = MarkSearch()
 
         self.solver = Solver()
-
+        
         def gen_calib_waypoints(start_pos):
             waypoints = []
-            for i in np.linspace(200,400,4):
-                for j in np.linspace(-150,150,4):
-                    for k in np.linspace(200,500,3):
+            for i in np.linspace(300,500,4):
+                for j in np.linspace(-250,250,4):
+                    for k in np.linspace(100,250,3):
                         waypoints.append(np.array([i,j,k]))
             return waypoints
     
@@ -338,14 +241,16 @@ class MultiCam:
         # Get ee pose
         ee_pos, ee_euler = robot.pose_ee()
         print('ee_euler',ee_euler)
-        ee_euler = [-180,0,0]
+        #ee_euler = [-180,0,0]
+        ee_euler = [169, 26, 27] #81
+        #ee_euler = [174,-27,35]#56
 
         waypoints = gen_calib_waypoints(ee_pos)
 
         calib_eulers = []
-        z_offsets = [0]
+        z_offsets = [0, 0]
         for z_off in z_offsets:
-            calib_euler = ee_euler + np.array([5,-5,z_off])
+            calib_euler = ee_euler 
             calib_eulers.append(calib_euler)
 
         waypoints_rob = []
@@ -356,10 +261,9 @@ class MultiCam:
         )
 
         itr = 0
-        for waypoint in waypoints:
+        for i, waypoint in enumerate(waypoints):
             print(itr, waypoint)
             itr+=1
-            #print(waypoint)
             successful_waypoint = True
 
             intermed_waypoints = {}
@@ -368,21 +272,22 @@ class MultiCam:
                 state_log = robot.move_to_ee_pose(
                     waypoint, calib_euler,
                 )
-
                 _, rgb_image, depth_frame, depth_img = cam.capture_rgbd()
                 (u,v), vis = self.marker_search.find_marker(rgb_image)
+                    
+                print("Waypoint found: ", u, v)
                 if u is None:
                     successful_waypoint = False
                     break
-
                 waypoint_cam = np.array(cam.deproject((u,v), depth_frame))
-                print(waypoint_cam)
                 waypoint_cam = 1000.0*waypoint_cam
-                print(waypoint_cam)
+                print('waypoint_cam', waypoint_cam)
                 intermed_waypoints[cam.serial_no] = waypoint_cam
-
+            
             if successful_waypoint:
-                waypoints_rob.append([waypoint[0], waypoint[1], waypoint[2]])
+                rot = R.from_euler('ZYX', ee_euler, degrees=True)
+                waypoint_rob = waypoint - 152 *rot.as_matrix()[:, 2]
+                waypoints_rob.append(waypoint_rob)
                 for k in intermed_waypoints:
                     waypoints_cam[k].append(intermed_waypoints[k])
 
@@ -401,16 +306,18 @@ class MultiCam:
             
 
         curr_calib.update(transforms)
-        #np.save('calib/transforms.npy', transforms)
         np.save('calib/transforms.npy', curr_calib)
+
+
 
    
 if __name__ == "__main__":
     # calibration
+    #multi_cam = MultiCam(['317422074281']) 
     #multi_cam = MultiCam(['317422075456']) 
-    #multi_cam.calibrate_cam()
+    #multi_cam.calibrate_cam_mm()
 
     # Uncomment to take an image + merged point cloud
     multi_cam = MultiCam(['317422075456' , '317422074281']) 
-    rgb_images, depth_images, pcd_merged = multi_cam.take_rgbd()
+    rgb_images, depth_images, pcd_merged = multi_cam.take_rgbd_mm()
     

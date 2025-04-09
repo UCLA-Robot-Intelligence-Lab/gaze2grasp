@@ -265,7 +265,7 @@ def set_camera_view_and_save_image(vis, intrinsic, extrinsic_matrix, output_file
 
     cv2.imwrite(output_filename, cv2.cvtColor(cropped_image_array, cv2.COLOR_RGB2BGR))
 
-def process_grasp(merged_pcds, grasp, save_folder, i, base_link_color, view = True):
+def process_grasp(vis, merged_pcds, grasp, save_folder, i, base_link_color, view = True):
     # Visualize and save gripper with cylinders
     if type(i) != int:
         color = base_link_color
@@ -320,15 +320,11 @@ intrinsic3 = load_intrinsic_matrix(f"./calib/intrinsic4.npy")
 
 base_link_color = [[1, 0.6, 0.8],  [1, 1, 0], [1, 0.5, 0], [0.4, 0, 0.8]]
 
-def generate_and_visualize_grasps(gaze, depth_images, segmented_cam_imgs, streamers, grasp_estimator, sess, full_save_folder):
+def generate_and_visualize_grasps(semantic_waypoint, depth_images, segmented_cam_imgs, streamers, grasp_estimator, sess, full_save_folder):
     depth_images = np.array(depth_images) / 1000  # Convert list to array first
     _, transformed_pcds, pred_grasps_cam, _, _, pred_gripper_openings = predict_grasps(grasp_estimator, sess, depth_images, np.array(segmented_cam_imgs), np.array([streamers[0].K, streamers[1].K]), np.array([TCR_81, TCR_56]), rgb = realsense_imgs)
     print('Predicted grasps:', pred_grasps_cam[True].shape[0])
-    # Semantic_waypoint calculated from the first camera
-    semantic_waypoint = streamers[0].deproject_pixel(pixels[0], depth_frames[0])
-    waypoint_h = np.append(semantic_waypoint, 1).reshape(4, 1)
-    transformed_waypoint = TCR_81 @ waypoint_h
-    semantic_waypoint = transformed_waypoint.flatten() 
+    
     distinct_grasps, distinct_openings = find_distinct_grasps(pred_grasps_cam, pred_gripper_openings, semantic_waypoint, n_grasps=3, max_distance=0.2)
     closest_grasps, closest_opening = find_closest_grasp(pred_grasps_cam, pred_gripper_openings, semantic_waypoint)
     grasps = distinct_grasps
@@ -345,12 +341,12 @@ def generate_and_visualize_grasps(gaze, depth_images, segmented_cam_imgs, stream
     for i, grasp in enumerate(grasps):
         # Visualizing with merged point cloud
         #os.makedirs(os.path.join(full_save_folder, "pcd_combined"), exist_ok=True)
-        #process_grasp(merged_pcd, grasp, os.path.join(full_save_folder, "pcd_combined"), i, base_link_color)
+        #process_grasp(vis, merged_pcd, grasp, os.path.join(full_save_folder, "pcd_combined"), i, base_link_color)
         # Visualizing with individual point cloud
         os.makedirs(os.path.join(full_save_folder, "pcd81"), exist_ok=True)
         os.makedirs(os.path.join(full_save_folder, "pcd56"), exist_ok=True)
-        process_grasp(transformed_pcds[0], grasp, os.path.join(full_save_folder, "pcd81"), i, base_link_color, view = "81")
-        process_grasp(transformed_pcds[1], grasp, os.path.join(full_save_folder, "pcd56"), i, base_link_color, view = "56")
+        process_grasp(vis, transformed_pcds[0], grasp, os.path.join(full_save_folder, "pcd81"), i, base_link_color, view = "81")
+        process_grasp(vis, transformed_pcds[1], grasp, os.path.join(full_save_folder, "pcd56"), i, base_link_color, view = "56")
         
         position_fingertip = 1000 * grasp[:3, 3]
         position_fingertip[2] = position_fingertip[2]+157
@@ -367,9 +363,9 @@ def generate_and_visualize_grasps(gaze, depth_images, segmented_cam_imgs, stream
         positions.append(position_ee)
         orientations.append([roll, pitch, yaw])
     # Visualizing all grasps
-    #process_grasp(merged_pcd, grasps, os.path.join(full_save_folder, "pcd_combined"), '_all_', base_link_color)
-    process_grasp(transformed_pcds[0], grasps, os.path.join(full_save_folder, "pcd81"), '_all_', base_link_color, view = "81")
-    process_grasp(transformed_pcds[1], grasps, os.path.join(full_save_folder, "pcd56"), '_all_', base_link_color, view = "56")
+    #process_grasp(vis, merged_pcd, grasps, os.path.join(full_save_folder, "pcd_combined"), '_all_', base_link_color)
+    process_grasp(vis, transformed_pcds[0], grasps, os.path.join(full_save_folder, "pcd81"), '_all_', base_link_color, view = "81")
+    process_grasp(vis, transformed_pcds[1], grasps, os.path.join(full_save_folder, "pcd56"), '_all_', base_link_color, view = "56")
 
     # Saving all the data
     data = np.array(list(zip(grasps, intermediate_pos, positions, orientations)), dtype=object)
@@ -378,7 +374,6 @@ def generate_and_visualize_grasps(gaze, depth_images, segmented_cam_imgs, stream
 
     return intermediate_pos, positions, orientations, openings
     
-def 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -466,23 +461,26 @@ if __name__ == "__main__":
         place_ee = (TCR_56 @ place_ee_h).flatten() * 1000
         place_ee[2] = place_ee[2] + 220
         print("Place position (EE Frame): ", place_ee)
-
-
-        '''depth_images = np.array(depth_images) / 1000  # Convert list to array first
-        merged_pcd, transformed_pcds, pred_grasps_cam, _, _, pred_gripper_openings = predict_grasps(grasp_estimator, sess, depth_images, np.array(segmented_cam_imgs), np.array([streamers[0].K, streamers[1].K]), np.array([TCR_81, TCR_56]), rgb = realsense_imgs)
-        print('Predicted grasps:', pred_grasps_cam[True].shape[0])
-        
-        vis = o3d.visualization.Visualizer()
-        window_width = 4988
-        window_height = 2742
-        vis.create_window(width=window_width, height=window_height)
-        #vis.create_window()
-        # Visualize all the predicted grasps
-        visualize_gripper_with_cylinders(vis, pred_grasps_cam[True], merged_pcd, connections, [[0, 0, 0] for _ in range(pred_grasps_cam[True].shape[0])])
+        # place_ee: averaged place position
+        # 
         semantic_waypoint = streamers[0].deproject_pixel(pixels[0], depth_frames[0])
         waypoint_h = np.append(semantic_waypoint, 1).reshape(4, 1)
         transformed_waypoint = TCR_81 @ waypoint_h
         semantic_waypoint = transformed_waypoint.flatten() 
+        # semantic_waypoint: averaged pick position
+        
+        '''depth_images = np.array(depth_images) / 1000  # Convert list to array first
+        merged_pcd, transformed_pcds, pred_grasps_cam, _, _, pred_gripper_openings = predict_grasps(grasp_estimator, sess, depth_images, np.array(segmented_cam_imgs), np.array([streamers[0].K, streamers[1].K]), np.array([TCR_81, TCR_56]), rgb = realsense_imgs)
+        print('Predicted grasps:', pred_grasps_cam[True].shape[0])
+        
+        
+        #vis.create_window()
+        # Visualize all the predicted grasps
+        visualize_gripper_with_cylinders(vis, pred_grasps_cam[True], merged_pcd, connections, [[0, 0, 0] for _ in range(pred_grasps_cam[True].shape[0])])
+        vis = o3d.visualization.Visualizer()
+        window_width = 4988
+        window_height = 2742
+        vis.create_window(width=window_width, height=window_height)
         sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
         sphere.translate(semantic_waypoint)
         sphere.paint_uniform_color([0,0,1])
@@ -508,12 +506,12 @@ if __name__ == "__main__":
         for i, grasp in enumerate(grasps):
             # Visualizing with merged point cloud
             os.makedirs(os.path.join(full_save_folder, "pcd_combined"), exist_ok=True)
-            process_grasp(merged_pcd, grasp, os.path.join(full_save_folder, "pcd_combined"), i, base_link_color)
+            process_grasp(vis,merged_pcd, grasp, os.path.join(full_save_folder, "pcd_combined"), i, base_link_color)
             # Visualizing with individual point cloud
             os.makedirs(os.path.join(full_save_folder, "pcd81"), exist_ok=True)
             os.makedirs(os.path.join(full_save_folder, "pcd56"), exist_ok=True)
-            process_grasp(transformed_pcds[0], grasp, os.path.join(full_save_folder, "pcd81"), i, base_link_color, view = "81")
-            process_grasp(transformed_pcds[1], grasp, os.path.join(full_save_folder, "pcd56"), i, base_link_color, view = "56")
+            process_grasp(vis,transformed_pcds[0], grasp, os.path.join(full_save_folder, "pcd81"), i, base_link_color, view = "81")
+            process_grasp(vis,transformed_pcds[1], grasp, os.path.join(full_save_folder, "pcd56"), i, base_link_color, view = "56")
             
 
             # Move robot to the grasp pose
@@ -542,7 +540,9 @@ if __name__ == "__main__":
             #robot.grasp(None)
             #robot.move_to_ee_pose(position_fingertip, [roll, pitch, yaw])
         '''
-        intermediate_pos, positions, orientations, openings =  generate_and_visualize_grasps(depth_images, segmented_cam_imgs, streamers, grasp_estimator, sess, full_save_folder)
+        intermediate_pos, positions, orientations, openings =  generate_and_visualize_grasps(semantic_waypoint, depth_images, segmented_cam_imgs, streamers, grasp_estimator, sess, full_save_folder)
+        
+        # To have the VLM select
         position_fingertip = intermediate_pos[-1]
         position_ee = positions[-1]
         roll, pitch, yaw = orientations[-1]
@@ -563,9 +563,9 @@ if __name__ == "__main__":
 
 
         '''# Visualizing all grasps
-        process_grasp(merged_pcd, grasps, os.path.join(full_save_folder, "pcd_combined"), '_all_', base_link_color)
-        process_grasp(transformed_pcds[0], grasps, os.path.join(full_save_folder, "pcd81"), '_all_', base_link_color, view = "81")
-        process_grasp(transformed_pcds[1], grasps, os.path.join(full_save_folder, "pcd56"), '_all_', base_link_color, view = "56")
+        process_grasp(vis,merged_pcd, grasps, os.path.join(full_save_folder, "pcd_combined"), '_all_', base_link_color)
+        process_grasp(vis,transformed_pcds[0], grasps, os.path.join(full_save_folder, "pcd81"), '_all_', base_link_color, view = "81")
+        process_grasp(vis,transformed_pcds[1], grasps, os.path.join(full_save_folder, "pcd56"), '_all_', base_link_color, view = "56")
 
         # Saving all the data
         data = np.array(list(zip(grasps, positions, orientations)), dtype=object)

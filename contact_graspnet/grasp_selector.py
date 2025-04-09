@@ -3,6 +3,10 @@ from sklearn.neighbors import NearestNeighbors
 from sklearn.cluster import KMeans
 from scipy.spatial.transform import Rotation 
 
+"""
+is_position_in_range() is defined in meters in contrast to the is_position_in_range() in multicam which limits the robot motion in mm. 
+The generated grasps are also displaced vertically by 157mm to match the position of the finger.
+"""
 
 def is_position_in_range(position, x_range=(0.060, 0.550), y_range=(-0.550, 0.550), z_range=(0.020-0.157, 0.600-0.157)):#z_range=(0.020, 0.600)):
     """Check if position is within valid workspace ranges in meters in the pcd ."""
@@ -115,7 +119,6 @@ def find_distinct_grasps(
     n_grasps=3,
     max_distance=0.25,
     filter_in_range=True,
-    min_orientation_diff=0.3,  # Minimum angular difference (radians) between grasps
 ):
     """
     Finds distinct grasps near a gaze point using improved clustering on position and orientation.
