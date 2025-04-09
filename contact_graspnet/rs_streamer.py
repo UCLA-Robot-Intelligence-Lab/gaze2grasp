@@ -176,6 +176,23 @@ class RealsenseStreamer():
         color_image = np.asanyarray(color_frame.get_data())
         depth_frame = self.filter_depth(depth_frame)
         depth_image = np.asanyarray(depth_frame.get_data())
+        
+        return  color_frame, color_image, depth_frame, depth_image
+    
+    def capture_rgbdpc(self):
+        frame_error = True
+        while frame_error:
+            try:
+                frames = self.align_to_color.process(frames)  
+                depth_frame = frames.get_depth_frame()
+                color_frame = frames.get_color_frame()
+                frame_error = False
+            except:
+                frames = self.pipeline.wait_for_frames()
+                continue
+        color_image = np.asanyarray(color_frame.get_data())
+        depth_frame = self.filter_depth(depth_frame)
+        depth_image = np.asanyarray(depth_frame.get_data())
         h, w = depth_image.shape
         u, v = np.meshgrid(np.arange(w), np.arange(h))
         u = u.flatten()

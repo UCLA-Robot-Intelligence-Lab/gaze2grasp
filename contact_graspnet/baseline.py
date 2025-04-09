@@ -158,8 +158,7 @@ if __name__ == "__main__":
     # ----------------------------
     # set up the realsense camera
     # ----------------------------
-    serial_no = '317422074281'
-    realsense_streamer = RealsenseStreamer(serial_no)
+    serial_no = '317422075456'
 
     transforms = np.load(f'calib/transforms.npy', allow_pickle=True).item()
     TCR = transforms[serial_no]['tcr']
@@ -316,6 +315,10 @@ if __name__ == "__main__":
     while not quit_keypress():
         try:
             if aria.CameraId.Rgb in observer.images:
+                rgb_image = np.rot90(observer.images[aria.CameraId.Rgb], -1)
+                rgb_image = cv2.cvtColor(rgb_image, cv2.COLOR_BGR2RGB)
+                gray = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2GRAY)
+
 
                 # detect which aruco markers are gazed at
                 gaze = observer.images.get(aria.CameraId.EyeTrack)
@@ -332,11 +335,15 @@ if __name__ == "__main__":
                 cv2.imshow(rgb_window, rgb_image)
                 del observer.images[aria.CameraId.Rgb]
 
+                realsense_image, transformed_x, transformed_y = homography_manager.process_frame(
+                    ariaCorners, ariaIds, gaze_coordinates
+                )
+
                 # segment that aruco marker from the image
                 segmented_cam_img, _ = select_from_sam_everything( #Segments everything and merge masks that is closest to the point prompt
                                     seg_model,
-                                    [gaze],
-                                    input_img=realsense_image,
+                                    [[gaze_coordinates[0], gaze_coordinates[1]]],
+                                    input_img=rgb_image,
                                     imgsz=640,
                                     iou=0.9,
                                     conf=0.4,
@@ -350,9 +357,11 @@ if __name__ == "__main__":
                 if np.max(mask) <= 1:
                     mask *= 255
 
-                masked_image = cv2.bitwise_and(realsense_image, realsense_image, mask=mask)
+                masked_image = cv2.bitwise_and(rgb_image, rgb_image, mask=mask)
                 gray = cv2.cvtColor(masked_image, cv2.COLOR_BGR2GRAY)
 
+                cv2.imshow('Image Window', gray)
+                
                 # get the aruco marker's id
                 corners, ids, _ = detector.detectMarkers(gray)
 
@@ -369,7 +378,6 @@ if __name__ == "__main__":
                         print(f"Marker ID {marker_id}: Action → {action}")
                     
                 # move the arm
-
 
 
             if aria.CameraId.Rgb in observer.images:

@@ -29,7 +29,7 @@ from multicam import XarmEnv
 from calib_utils.rotation_transform import transform_rotation_camera_to_robot_roll_yaw_pitch
 from calib_utils.linalg_utils import transform
 
-from live_visualization import capture_and_process_rgbd, process_grasp, 
+from live_visualization import generate_and_visualize_grasps
 import open3d as o3d
 
 physical_devices = tf.config.experimental.list_physical_devices('GPU')
@@ -206,6 +206,19 @@ def main():
         model_config,
         model_device
     )
+
+    base_folder = "combined_images"
+    while True:
+        save_folder = input(f"Enter the folder name to save results (will be saved inside '{base_folder}'): ").strip()
+        if not save_folder:
+            save_folder = "default_results"  
+        full_save_folder = os.path.join(base_folder, save_folder)
+        if os.path.isdir(os.path.dirname(full_save_folder)):
+            break
+        print(f"Invalid folder name. Please try again.")
+    os.makedirs(full_save_folder, exist_ok=True)
+    print(f"Data will be saved in {full_save_folder}")
+
 
     # Initialize Homography Manager
     homography_manager_81 = HomographyManager(serial_no=SERIAL_NO_81)

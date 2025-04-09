@@ -185,6 +185,7 @@ def select_from_sam_everything(
     print('ann shape: ', ann.shape)
     
     image_size = input_img.shape[0] * input_img.shape[1]
+    print("image_size: ", image_size)
     filtered_masks = []
     filtered_centers = []
     

@@ -1,7 +1,7 @@
 import open3d as o3d
 import numpy as np
 
-pcd = o3d.io.read_point_cloud("/home/u-ril/gaze2grasp/combined_pcd.pcd") 
+pcd = o3d.io.read_point_cloud("/home/u-ril/gaze2grasp/calib/combined_pcd.pcd") 
 vis = o3d.visualization.Visualizer()
 vis.create_window()
 vis.add_geometry(pcd)
@@ -18,7 +18,7 @@ intrinsic_data = {
 np.save("./calib/extrinsic_combined1.npy", pinhole_camera_parameters.extrinsic)
 np.save("./calib/intrinsic1.npy", intrinsic_data)
 
-pcd = o3d.io.read_point_cloud("/home/u-ril/gaze2grasp/combined_pcd.pcd")
+pcd = o3d.io.read_point_cloud("/home/u-ril/gaze2grasp/calib/combined_pcd.pcd")
 vis = o3d.visualization.Visualizer()
 vis.create_window()
 vis.add_geometry(pcd)
@@ -35,7 +35,7 @@ intrinsic_data = {
 np.save("./calib/extrinsic_combined2.npy", pinhole_camera_parameters.extrinsic)
 np.save("./calib/intrinsic2.npy", intrinsic_data)
 
-pcd = o3d.io.read_point_cloud("/home/u-ril/gaze2grasp/0.pcd")
+pcd = o3d.io.read_point_cloud("/home/u-ril/gaze2grasp/calib/0.pcd")
 vis = o3d.visualization.Visualizer()
 vis.create_window()
 vis.add_geometry(pcd)
@@ -52,7 +52,7 @@ intrinsic_data = {
 np.save("./calib/extrinsic_combined3.npy", pinhole_camera_parameters.extrinsic)
 np.save("./calib/intrinsic3.npy", intrinsic_data)
 
-pcd = o3d.io.read_point_cloud("/home/u-ril/gaze2grasp/1.pcd")
+pcd = o3d.io.read_point_cloud("/home/u-ril/gaze2grasp/calib/1.pcd")
 vis = o3d.visualization.Visualizer()
 vis.create_window()
 vis.add_geometry(pcd)

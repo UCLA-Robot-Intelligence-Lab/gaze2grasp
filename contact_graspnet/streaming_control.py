@@ -384,17 +384,17 @@ def main():
                         cv2.circle(realsense_image, (int(transformed_x), int(transformed_y)), 5, (0, 255, 0), 10)
                         cv2.putText(realsense_image, f'Transformed Gaze: ({round(transformed_x, 2)}, {round(transformed_y, 2)})', (20, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
-                        point_3d = homography_manager.get_vector(transformed_x, transformed_y)
-                        if point_3d is not None:
+                        # point_3d = homography_manager.get_vector(transformed_x, transformed_y)
+                        # if point_3d is not None:
 
-                            # If you want to visualize it in 2D, you need to project the 3D point to 2D (for rendering on the image)
-                            projected_point = homography_manager.projected_point_test(point_3d)
+                        #     # If you want to visualize it in 2D, you need to project the 3D point to 2D (for rendering on the image)
+                        #     projected_point = homography_manager.projected_point_test(point_3d)
                             
-                            # Draw a line from (0,0) to the projected gaze point on the 2D image
-                            start = (int(0), int(0))  # Camera center (for 2D)
-                            end = (int(transformed_x), int(transformed_y))  # Projected gaze point
+                        #     # Draw a line from (0,0) to the projected gaze point on the 2D image
+                        #     start = (int(0), int(0))  # Camera center (for 2D)
+                        #     end = (int(transformed_x), int(transformed_y))  # Projected gaze point
                             
-                            cv2.line(realsense_image, start, end, (0, 0, 255), 2)  # Draw a red line
+                        #     cv2.line(realsense_image, start, end, (0, 0, 255), 2)  # Draw a red line
 
                     
                         # gaze history returns true if user has been staring at the same (x, y) coordinate point for x amount of frames
@@ -420,24 +420,6 @@ def main():
                         cv2.putText(realsense_image, 'No Transformation', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 
                     cv2.imshow(realsense_window, realsense_image)
-                    ''' # TRYING TO FIGURE OUT THE GRASP TO THE ROBOT TRANSFORMATION
-                    closest_grasp = np.array([[ 0.49967167,  0.8235121  ,-0.2686188,   0.00603566],
-                            [-0.1900385 ,  0.40676996 , 0.8935455  ,-0.14829922],
-                            [ 0.84511155 ,-0.39543146 , 0.35975048 , 0.6978372 ],
-                            [ 0.          ,0.         , 0.         , 1.        ]])
-                    position_cam = 1000.0*np.array(closest_grasp[:3, 3])  # Extract translation
-                    position_rob = np.array(transform(np.array(position_cam).reshape(1,3), TCR))
-
-                    # Extract rotation matrix and convert to Euler angles (roll, pitch, yaw)
-                    rotation_matrix = closest_grasp[:3, :3]
-                    roll, pitch, yaw = rotation_matrix_to_euler(rotation_matrix)
-
-                    orientation = [roll, pitch, yaw]
-                    print("Position: ", position_rob)
-                    print("Orientation: ", orientation)
-                    robot.move_to_ee_pose(position_rob[0], [1.79132906e+02 ,-1.00840000e-02 , 7.75670000e-01])
-                    time.sleep(20)'''
-
 
         except Exception as e:
             print(f'Encountered error: {e}')

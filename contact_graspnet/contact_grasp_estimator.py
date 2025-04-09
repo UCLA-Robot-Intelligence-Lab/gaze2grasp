@@ -20,9 +20,6 @@ from tf_train_ops import get_bn_decay
 import config_utils
 from data import farthest_points, distance_by_translation_point, preprocess_pc_for_inference, regularize_pc_point_count, depth2pc, reject_median_outliers
 
-import open3d as o3d
-import numpy as np
-
 def visualize_zxy_planes_actual_values(pcd):
     geometries = [pcd]
     colors = [
@@ -81,6 +78,7 @@ def visualize_zxy_planes_actual_values(pcd):
     geometries.append(origin)
 
     o3d.visualization.draw_geometries(geometries)
+    
 class GraspEstimator:
     """
     Class for building and inferencing Contact-GraspNet
@@ -539,8 +537,8 @@ class GraspEstimator:
                 #print(segmap[i].shape)
                 pc_full, pc_segments, pc_color  = self.extract_point_clouds(depth[i], K[i], segmap=segmap[i], segmap_id=segmap_id, skip_border_objects=skip_border_objects, margin_px=margin_px, z_range=z_range, rgb=rgb[i][:, :, ::-1])
                 
-                print(np.array(pc_full).shape)
-                print(np.array(pc_color).shape)            
+                #print(np.array(pc_full).shape)
+                #print(np.array(pc_color).shape)            
                 print(np.array(pc_segments[True]).shape)
 
 

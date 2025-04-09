@@ -9,7 +9,7 @@ import glob
 import open3d as o3d
 import numpy as np
 from grasp_selector import find_closest_grasp, find_distinct_grasps
-from visualize_gripper import visualize_gripper
+#from meshes.visualize_gripper import visualize_gripper
 import tensorflow.compat.v1 as tf
 from segment.FastSAM.fastsam import FastSAM
 from segment.SAMInference import select_from_sam_everything
@@ -176,7 +176,7 @@ def visualize_gripper_with_cylinders(vis, grasps, pcd, connections, base_color):
             cylinder = create_cylinder(start_point, end_point, radius, base_color[i])
             vis.add_geometry(cylinder)
 
-def visualize_gripper_with_arm(vis, grasps, pcd, base_color):
+'''def visualize_gripper_with_arm(vis, grasps, pcd, base_color):
     if grasps.size == 16:  
         grasps = [grasps]
     if type(base_color[0]) != list:
@@ -186,7 +186,7 @@ def visualize_gripper_with_arm(vis, grasps, pcd, base_color):
     for i, grasp in enumerate(grasps):
         gripper = visualize_gripper(grasp, base_color[i])
         for part in gripper:
-            vis.add_geometry(part)
+            vis.add_geometry(part)'''
     
 def visualize_gripper_with_axes(vis, grasps, pcd, base_color):
     if grasps.size == 16:  
@@ -212,7 +212,7 @@ def visualize_gripper_with_axes(vis, grasps, pcd, base_color):
 
 # Function to capture and process RGBD data
 def capture_and_process_rgbd(realsense_streamer):
-    points_3d, colors, _, realsense_img, depth_frame, depth_image = realsense_streamer.capture_rgbd()
+    points_3d, colors, _, realsense_img, depth_frame, depth_image = realsense_streamer.capture_rgbdpc()
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points_3d)
     pcd.colors = o3d.utility.Vector3dVector(colors)
@@ -237,7 +237,7 @@ def set_camera_view_and_save_image(vis, intrinsic, extrinsic_matrix, output_file
 
     vis.update_renderer()
     vis.poll_events()
-    time.sleep(0.2)
+    #time.sleep(0.2)
 
     # Capture and save the image
     float_buffer = vis.capture_screen_float_buffer()
@@ -318,10 +318,17 @@ intrinsic1 = load_intrinsic_matrix(f"./calib/intrinsic2.npy")
 intrinsic2 = load_intrinsic_matrix(f"./calib/intrinsic3.npy")
 intrinsic3 = load_intrinsic_matrix(f"./calib/intrinsic4.npy")
 
-def generate_and_visualize_grasps():
+base_link_color = [[1, 0.6, 0.8],  [1, 1, 0], [1, 0.5, 0], [0.4, 0, 0.8]]
+
+def generate_and_visualize_grasps(gaze, depth_images, segmented_cam_imgs, streamers, grasp_estimator, sess, full_save_folder):
     depth_images = np.array(depth_images) / 1000  # Convert list to array first
-    merged_pcd, transformed_pcds, pred_grasps_cam, _, _, pred_gripper_openings = predict_grasps(grasp_estimator, sess, depth_images, np.array(segmented_cam_imgs), np.array([streamers[0].K, streamers[1].K]), np.array([TCR_81, TCR_56]), rgb = realsense_imgs)
+    _, transformed_pcds, pred_grasps_cam, _, _, pred_gripper_openings = predict_grasps(grasp_estimator, sess, depth_images, np.array(segmented_cam_imgs), np.array([streamers[0].K, streamers[1].K]), np.array([TCR_81, TCR_56]), rgb = realsense_imgs)
     print('Predicted grasps:', pred_grasps_cam[True].shape[0])
+    # Semantic_waypoint calculated from the first camera
+    semantic_waypoint = streamers[0].deproject_pixel(pixels[0], depth_frames[0])
+    waypoint_h = np.append(semantic_waypoint, 1).reshape(4, 1)
+    transformed_waypoint = TCR_81 @ waypoint_h
+    semantic_waypoint = transformed_waypoint.flatten() 
     distinct_grasps, distinct_openings = find_distinct_grasps(pred_grasps_cam, pred_gripper_openings, semantic_waypoint, n_grasps=3, max_distance=0.2)
     closest_grasps, closest_opening = find_closest_grasp(pred_grasps_cam, pred_gripper_openings, semantic_waypoint)
     grasps = distinct_grasps
@@ -330,11 +337,15 @@ def generate_and_visualize_grasps():
     openings.append(closest_opening)
     grasps = np.array(grasps)
     openings = np.array(openings)*1000
-    positions, orientations = [], []
+    intermediate_pos, positions, orientations = [], [], []
+    vis = o3d.visualization.Visualizer()
+    window_width = 4988
+    window_height = 2742
+    vis.create_window(width=window_width, height=window_height)
     for i, grasp in enumerate(grasps):
         # Visualizing with merged point cloud
-        os.makedirs(os.path.join(full_save_folder, "pcd_combined"), exist_ok=True)
-        process_grasp(merged_pcd, grasp, os.path.join(full_save_folder, "pcd_combined"), i, base_link_color)
+        #os.makedirs(os.path.join(full_save_folder, "pcd_combined"), exist_ok=True)
+        #process_grasp(merged_pcd, grasp, os.path.join(full_save_folder, "pcd_combined"), i, base_link_color)
         # Visualizing with individual point cloud
         os.makedirs(os.path.join(full_save_folder, "pcd81"), exist_ok=True)
         os.makedirs(os.path.join(full_save_folder, "pcd56"), exist_ok=True)
@@ -352,20 +363,22 @@ def generate_and_visualize_grasps():
         print("Approach Position (EE Frame): ", position_fingertip)
         print("Adjusted Position (EE Frame): ", position_ee)
         print("Orientation (EE Frame): ", [roll, pitch, yaw])
+        intermediate_pos.append(position_fingertip)
         positions.append(position_ee)
         orientations.append([roll, pitch, yaw])
     # Visualizing all grasps
-    process_grasp(merged_pcd, grasps, os.path.join(full_save_folder, "pcd_combined"), '_all_', base_link_color)
+    #process_grasp(merged_pcd, grasps, os.path.join(full_save_folder, "pcd_combined"), '_all_', base_link_color)
     process_grasp(transformed_pcds[0], grasps, os.path.join(full_save_folder, "pcd81"), '_all_', base_link_color, view = "81")
     process_grasp(transformed_pcds[1], grasps, os.path.join(full_save_folder, "pcd56"), '_all_', base_link_color, view = "56")
 
     # Saving all the data
-    data = np.array(list(zip(grasps, positions, orientations)), dtype=object)
+    data = np.array(list(zip(grasps, intermediate_pos, positions, orientations)), dtype=object)
     np.save(os.path.join(full_save_folder, "grasp_data.npy"), data)
-
-    
     vis.destroy_window()
+
+    return intermediate_pos, positions, orientations, openings
     
+def 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -397,7 +410,7 @@ if __name__ == "__main__":
     #print(sess)
     #print('Session created: ', sess.list_devices())
     grasp_estimator.load_weights(sess, saver, FLAGS.ckpt_dir, mode='test')
-    base_link_color = [[1, 0.6, 0.8],  [1, 1, 0], [1, 0.5, 0], [0.4, 0, 0.8]]
+    
 
     while True:
         base_folder = "vlm_images"
@@ -430,6 +443,7 @@ if __name__ == "__main__":
         pixels = pixels_81
         pixels.extend(pixels_56)
         print(pixels)
+        # pixels: 81_pick / average_pick, 56_pick, place
         
         cv2.namedWindow("Gaze Segmentation (Camera 81)", cv2.WINDOW_NORMAL)
         cv2.resizeWindow("Gaze Segmentation (Camera 81)", 640, 480)
@@ -437,15 +451,15 @@ if __name__ == "__main__":
         cv2.namedWindow("Gaze Segmentation (Camera 56)", cv2.WINDOW_NORMAL)
         cv2.resizeWindow("Gaze Segmentation (Camera 56)", 640, 480)
         cv2.moveWindow("Gaze Segmentation (Camera 56)", 1800, 500)
-        print('pixel_81:', pixels[0])
+        #print('pixel_81:', pixels[0])
         segmented_cam_imgs = [segment_image(realsense_imgs[0], np.array(pixels[0]))]
         
         cv2.imshow("Gaze Segmentation (Camera 81)", segmented_cam_imgs[0].astype(np.uint8) * 255)
-        cv2.waitKey(0)
-        print('pixel_56:', pixels[1])
+        #cv2.waitKey(0)
+        #print('pixel_56:', pixels[1])
         segmented_cam_imgs.append(segment_image(realsense_imgs[1], np.array(pixels[1])))
         cv2.imshow("Gaze Segmentation (Camera 56)", segmented_cam_imgs[1].astype(np.uint8) * 255)
-        cv2.waitKey(0)
+        #cv2.waitKey(0)
 
         place_ee = streamers[1].deproject_pixel(pixels[2], depth_frames[1])
         place_ee_h = np.append(place_ee, 1).reshape(4, 1)
@@ -454,7 +468,7 @@ if __name__ == "__main__":
         print("Place position (EE Frame): ", place_ee)
 
 
-        depth_images = np.array(depth_images) / 1000  # Convert list to array first
+        '''depth_images = np.array(depth_images) / 1000  # Convert list to array first
         merged_pcd, transformed_pcds, pred_grasps_cam, _, _, pred_gripper_openings = predict_grasps(grasp_estimator, sess, depth_images, np.array(segmented_cam_imgs), np.array([streamers[0].K, streamers[1].K]), np.array([TCR_81, TCR_56]), rgb = realsense_imgs)
         print('Predicted grasps:', pred_grasps_cam[True].shape[0])
         
@@ -527,7 +541,11 @@ if __name__ == "__main__":
             #robot.grasp(openings[i])
             #robot.grasp(None)
             #robot.move_to_ee_pose(position_fingertip, [roll, pitch, yaw])
-        
+        '''
+        intermediate_pos, positions, orientations, openings =  generate_and_visualize_grasps(depth_images, segmented_cam_imgs, streamers, grasp_estimator, sess, full_save_folder)
+        position_fingertip = intermediate_pos[-1]
+        position_ee = positions[-1]
+        roll, pitch, yaw = orientations[-1]
         # Only move to the last pose
         robot.grasp(None)
         robot.go_home()
@@ -544,7 +562,7 @@ if __name__ == "__main__":
         robot.go_home()
 
 
-        # Visualizing all grasps
+        '''# Visualizing all grasps
         process_grasp(merged_pcd, grasps, os.path.join(full_save_folder, "pcd_combined"), '_all_', base_link_color)
         process_grasp(transformed_pcds[0], grasps, os.path.join(full_save_folder, "pcd81"), '_all_', base_link_color, view = "81")
         process_grasp(transformed_pcds[1], grasps, os.path.join(full_save_folder, "pcd56"), '_all_', base_link_color, view = "56")
@@ -554,6 +572,6 @@ if __name__ == "__main__":
         np.save(os.path.join(full_save_folder, "grasp_data.npy"), data)
 
         
-        vis.destroy_window()
+        vis.destroy_window()'''
 
         sys.exit()
