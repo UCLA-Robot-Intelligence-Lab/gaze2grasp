@@ -111,7 +111,6 @@ def find_closest_grasp(pred_grasps_cam, pred_gripper_openings, semantic_waypoint
     print(f"CLOSEST GRASP (index {original_indices[best_idx]}):", closest_grasp)
     print(f"GRIPPER OPENING: {gripper_opening}")
     return closest_grasp, gripper_opening
-
 def find_distinct_grasps(
     pred_grasps_cam,
     pred_gripper_openings,
@@ -133,7 +132,7 @@ def find_distinct_grasps(
         min_orientation_diff: Minimum angular difference (radians) between selected grasps.
 
     Returns:
-        tuple: (distinct_grasps, distinct_openings, original_indices)
+        tuple: (distinct_grasps, distinct_openings)
     """
     # --- Data Preparation ---
     if isinstance(pred_grasps_cam, dict):
@@ -165,29 +164,34 @@ def find_distinct_grasps(
         original_indices = original_indices[valid_mask]
 
     # --- Find grasps near the semantic waypoint ---
-    nbrs = NearestNeighbors(n_neighbors=min(50, len(grasp_positions))).fit(grasp_positions)
+    if len(grasp_positions) == 0:
+        print("No valid grasp positions after filtering.")
+        return [], []
+
+    n_neighbors_val = min(50, len(grasp_positions))
+    nbrs = NearestNeighbors(n_neighbors=max(1, n_neighbors_val)).fit(grasp_positions)
     dists, idxs = nbrs.kneighbors([semantic_waypoint], return_distance=True)
     nearby_mask = dists[0] <= max_distance
     nearby_indices = idxs[0][nearby_mask]
 
     if len(nearby_indices) == 0:
         print("No grasps found within max_distance.")
-        return None, None
+        return [], []
 
     nearby_grasps = all_grasps[nearby_indices]
     nearby_positions = grasp_positions[nearby_indices]
     nearby_quats = grasp_quats[nearby_indices]
     nearby_openings = all_openings[nearby_indices]
-    
+
     # --- Feature Engineering ---
     position_weight = 0.2
-    pos_features = (nearby_positions - semantic_waypoint) / max_distance  * position_weight # Normalized
-    quat_features = nearby_quats * (1.0 - position_weight) # Quaternions are already unit vectors
+    pos_features = (nearby_positions - semantic_waypoint) / max_distance * position_weight  # Normalized
+    quat_features = nearby_quats * (1.0 - position_weight)  # Quaternions are already unit vectors
     features = np.hstack([pos_features, quat_features])
 
     # --- Clustering ---
     n_clusters = min(n_grasps, len(nearby_grasps))
-    kmeans = KMeans(n_clusters=n_clusters, random_state=0).fit(features)
+    kmeans = KMeans(n_clusters=n_clusters, random_state=0, n_init=10).fit(features) # Added n_init for stability
     cluster_labels = kmeans.labels_
 
     # --- Select Distinct Grasps ---
@@ -199,13 +203,14 @@ def find_distinct_grasps(
         cluster_grasps = nearby_grasps[cluster_mask]
         cluster_openings = nearby_openings[cluster_mask]
 
-        # Select the grasp with median opening width in the cluster
-        median_idx = np.argsort(cluster_openings)[len(cluster_openings) // 2]
-        selected_grasp = cluster_grasps[median_idx]
-        selected_opening = cluster_openings[median_idx]
+        if len(cluster_grasps) > 0:
+            # Select the grasp with median opening width in the cluster
+            median_idx = np.argsort(cluster_openings)[len(cluster_openings) // 2]
+            selected_grasp = cluster_grasps[median_idx]
+            selected_opening = cluster_openings[median_idx]
 
-        distinct_grasps.append(selected_grasp)
-        distinct_openings.append(selected_opening)
+            distinct_grasps.append(selected_grasp)
+            distinct_openings.append(selected_opening)
 
     print(f"Selected {len(distinct_grasps)} distinct grasps.")
     return distinct_grasps, distinct_openings

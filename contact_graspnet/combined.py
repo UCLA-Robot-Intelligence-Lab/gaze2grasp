@@ -29,7 +29,7 @@ from multicam import XarmEnv
 from calib_utils.rotation_transform import transform_rotation_camera_to_robot_roll_yaw_pitch
 from calib_utils.linalg_utils import transform
 
-from live_visualization import generate_and_visualize_grasps
+from visualizations.live_visualization import generate_and_visualize_grasps
 import open3d as o3d
 
 physical_devices = tf.config.experimental.list_physical_devices('GPU')
@@ -609,9 +609,6 @@ def main():
                                         robot.move_to_ee_pose(position_rob, orientation)
                                     else:
                                         print("Target position is out of range")
-
-        
-
                     else:
                         cv2.putText(realsense_image, 'No Transformation', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 

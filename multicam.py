@@ -17,6 +17,7 @@ import time
 from pc_utils import merge_pcls
 from rs_streamer import RealsenseStreamer, MarkSearch
 from calib_utils.solver import Solver
+from calib_utils.linalg_utils import transform
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '/home/u-ril/URIL/xArm-Python-SDK'))
 from xarm import XArmAPI
@@ -27,7 +28,7 @@ from dataclasses import dataclass
 
 GRIPPER_SPEED, GRIPPER_FORCE, GRIPPER_MAX_WIDTH, GRIPPER_TOLERANCE = 0.1, 40, 0.08570, 0.01
 
-def is_position_in_range(position, x_range=(60, 550), y_range=(-550, 550), z_range=(20, 600)):
+def is_position_in_range(position, x_range=(60, 650), y_range=(-650, 650), z_range=(5, 600)):
     """Check if position is within valid workspace ranges."""
     x, y, z = position
     return (x_range[0] <= x <= x_range[1] and
@@ -108,10 +109,9 @@ class XarmEnv:
         self.go_home()
         self.grasp(None)
 
-
     def grasp(self, grasp):
         gripper_open = 800
-        gripper_closed = 75
+        gripper_closed = 10
         if grasp == None:
             ret = self.arm.set_gripper_position(gripper_open, wait=False)
             if ret != 0:
@@ -308,15 +308,115 @@ class MultiCam:
         curr_calib.update(transforms)
         np.save('calib/transforms.npy', curr_calib)
 
+class PixelSelector:
+    def __init__(self):
+        pass
 
+    def load_image(self, img, recrop=False):
+        self.img = img
+        if recrop:
+            cropped_img = self.crop_at_point(img, 700, 300, width=400, height=300)
+            self.img = cv2.resize(cropped_img, (640, 480))
+
+    def crop_at_point(self, img, x, y, width=640, height=480):
+        img = img[y:y+height, x:x+width]
+        return img
+
+    def mouse_callback(self, event, x, y, flags, param):
+        cv2.imshow("pixel_selector", self.img)
+        if event == cv2.EVENT_LBUTTONDBLCLK:
+            self.clicks.append([x, y])
+            cv2.circle(self.img, (x, y), 3, (255, 255, 0), -1)
+
+    def run(self, img):
+        self.load_image(img)
+        self.clicks = []
+        cv2.namedWindow('pixel_selector')
+        cv2.setMouseCallback('pixel_selector', self.mouse_callback)
+        while True:
+            k = cv2.waitKey(20) & 0xFF
+            if k == 27:
+                break
+        return self.clicks
+
+def goto(robot, realsense_streamer, pixel_selector, TCR, refine=False):
+    # right
+    
+    print(TCR)
+    """
+    UPDATE THE TCR HERE TO GO TO THE DESIRED POSE
+    """
+    #for 56
+    #TCR[0,3] += 75#x
+    #TCR[1,3] += 75#y
+    #TCR[2,3] += 40#z
+    #for 81
+    #TCR[0,3] += -75#x
+    #TCR[1,3] += -30#y
+    #TCR[2,3] += 20#z
+
+    for i in range(5):
+        _, rgb_image, depth_frame, depth_img = realsense_streamer.capture_rgbd()
+
+    pixels = pixel_selector.run(rgb_image)
+    waypoint_cam = 1000*np.array(realsense_streamer.deproject(pixels[0], depth_frame))
+    print(waypoint_cam)
+    waypoint_rob = transform(np.array(waypoint_cam).reshape(1,3), TCR)
+
+    # Get waypoints in robot frame
+    ee_pos_desired = np.array(waypoint_rob)[0]+np.array([0,0,152])
+    print('ee_pos_desired', ee_pos_desired)
+
+    # Put robot in canonical orientation
+    robot.go_home()
+    ee_pos, ee_euler = robot.pose_ee()
+
+    state_log = robot.move_to_ee_pose(
+        ee_pos, ee_euler, 
+    )
+    state_log = robot.move_to_ee_pose(
+        ee_pos_desired, ee_euler, 
+    )
+    return TCR
 
    
 if __name__ == "__main__":
-    # calibration
-    #multi_cam = MultiCam(['317422074281']) 
-    #multi_cam = MultiCam(['317422075456']) 
-    #multi_cam.calibrate_cam_mm()
+    """
+    CALIBRATION
+    - Change the euler angles and waypoints accordingly if required for each camera
+    """
+    '''
+    multi_cam = MultiCam(['317422074281']) 
+    multi_cam.calibrate_cam_mm()
+    
+    multi_cam = MultiCam(['317422075456']) 
+    multi_cam.calibrate_cam_mm()
+    '''
 
+    """
+    FINE TUNING CALIBRATION
+    - Update goto function to go to the desired pose
+    """
+    '''
+    serial_no = '317422074281'
+    #serial_no = '317422075456'
+    realsense_streamer = RealsenseStreamer(serial_no)
+    transforms = np.load(f'calib/transforms.npy', allow_pickle=True).item()
+    TCR = transforms[serial_no]['tcr']
+    robot = XarmEnv()
+    pixel_selector = PixelSelector()
+    TCR = goto(robot, realsense_streamer, pixel_selector, TCR, refine=True)
+    transforms[serial_no]['tcr'] = TCR
+
+    res = input('save?')
+    if res == 'y' or res == 'Y':
+        np.save('calib/transforms.npy', transforms)
+        print('SAVED')
+    '''
+
+    """
+    TESTING THAT BOTH CAMERAS ARE CORRECTLY CALIBRATED TO THE SAME ROBOT BASE
+    """
     # Uncomment to take an image + merged point cloud
     multi_cam = MultiCam(['317422075456' , '317422074281']) 
     rgb_images, depth_images, pcd_merged = multi_cam.take_rgbd_mm()
