@@ -2,6 +2,98 @@ import cv2
 import open3d as o3d
 import numpy as np
 from rs_streamer import RealsenseStreamer
+import numpy as np
+from scipy.spatial.transform import Rotation as R
+from sklearn.cluster import KMeans
+
+
+def cluster_normals_with_position(points, normals, n_clusters=4, direction_weight=0.5):
+    points = np.asarray(points)
+    normals = np.asarray(normals)
+
+    # Normalize normals just in case
+    normals = normals / np.linalg.norm(normals, axis=1, keepdims=True)
+
+    # Normalize positions for fair clustering (optional but helpful)
+    pos_min = points.min(axis=0)
+    pos_max = points.max(axis=0)
+    norm_positions = (points - pos_min) / (pos_max - pos_min + 1e-8)
+
+    # Combine features
+    features = np.hstack([
+        norm_positions * (1 - direction_weight),
+        normals * direction_weight
+    ])
+
+    # Cluster
+    kmeans = KMeans(n_clusters=n_clusters, n_init=10, random_state=42)
+    labels = kmeans.fit_predict(features)
+
+    return labels
+
+def get_cluster_centroids(points, normals, labels):
+    points = np.asarray(points)
+    normals = np.asarray(normals)
+    labels = np.asarray(labels)
+
+    cluster_centroids = []
+
+    for cluster_id in np.unique(labels):
+        cluster_indices = np.where(labels == cluster_id)[0]
+        cluster_points = points[cluster_indices]
+        cluster_normals = normals[cluster_indices]
+
+        # Compute mean of positions and normals
+        mean_point = cluster_points.mean(axis=0)
+        mean_normal = cluster_normals.mean(axis=0)
+        mean_normal /= np.linalg.norm(mean_normal)  # Re-normalize
+
+        cluster_centroids.append((mean_point, mean_normal))
+
+    return cluster_centroids
+
+
+def normal_to_pose_matrix(point, normal, pitch_degrees=0):
+    """
+    Converts a surface normal and point into a 4x4 pose matrix.
+
+    Args:
+        point: 3D coordinates of the point.
+        normal: 3D unit normal vector.
+        pitch_degrees: Optional pitch angle in degrees around x-axis of the frame.
+
+    Returns:
+        4x4 transformation matrix (numpy array).
+    """
+    normal = np.array(normal)
+    point = np.array(point)
+    normal = normal / np.linalg.norm(normal)
+
+    z_axis = normal
+
+    # Arbitrary vector not parallel to z
+    arbitrary = np.array([0, 0, 1]) if abs(z_axis[2]) < 0.99 else np.array([1, 0, 0])
+
+    x_axis = np.cross(arbitrary, z_axis)
+    x_axis /= np.linalg.norm(x_axis)
+    y_axis = np.cross(z_axis, x_axis)
+    y_axis /= np.linalg.norm(y_axis)
+
+    # Rotation matrix (before pitch)
+    rot_matrix = np.stack([x_axis, y_axis, z_axis], axis=1)
+
+    # Apply pitch rotation around x-axis
+    if pitch_degrees != 0:
+        pitch_rad = np.deg2rad(pitch_degrees)
+        pitch_rot = R.from_euler('x', pitch_rad).as_matrix()
+        rot_matrix = rot_matrix @ pitch_rot
+
+    # Build 4x4 transformation matrix
+    T = np.eye(4)
+    T[:3, :3] = rot_matrix
+    T[:3, 3] = point
+    return T
+
 
 # Run in terminal using:
 # python -m gaze_processing.select_camera
@@ -103,6 +195,25 @@ if __name__ == "__main__":
     pixels = pixels_81
     pixels.extend(pixels_56)
     print(pixels)
+
+    pcd = pcds[0]
+    pcd.estimate_normals(
+    search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30)
+    )
+    normals = np.asarray(pcd.normals)
+    points = np.asarray(pcd.points)
+    labels = cluster_normals_with_position(points, normals, n_clusters=5, direction_weight=0.4)
+    centroids = get_cluster_centroids(points, normals, labels)
+    print(labels)
+    print(centroids)
+
+    for i, (pt, n) in enumerate(centroids):
+        T = normal_to_pose_matrix(pt, n, pitch_degrees=30)  # You can change pitch here
+        print(f"Cluster {i} Pose Matrix:\n{T}\n, Point {pt}, Normal {n}")
+
+    # Visualize
+    #o3d.visualization.draw_geometries([pcd], point_show_normal=True)
+
 
     boolean, gaze_images = select_viewpts(pixels, streamers, depth_frames, realsense_imgs, TCR)
     if gaze_images:
