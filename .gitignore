@@ -18,3 +18,6 @@ contact_graspnet/vision_utils*/
 projectaria_tools_python_env*/
 vlm_images/default_results
 vlm_images/older_visualizations
+
+# ABSOLUTELY DO NOT UNIGNORE THE .ENV FILE
+.env

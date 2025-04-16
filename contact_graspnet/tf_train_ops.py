@@ -4,7 +4,7 @@ import tensorflow.compat.v1 as tf
 tf.disable_eager_execution()
 TF2 = True
 
-from data import farthest_points
+from contact_graspnet.data import farthest_points
 
 def get_learning_rate(step, optimizer_config):
     """

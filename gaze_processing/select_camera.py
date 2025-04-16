@@ -5,7 +5,12 @@ from rs_streamer import RealsenseStreamer
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 from sklearn.cluster import KMeans
+from visualizations.live_visualization import visualize_gripper_with_cylinders
 
+
+
+# Run in terminal using:
+# python -m gaze_processing.select_camera
 
 def cluster_normals_with_position(points, normals, n_clusters=4, direction_weight=0.5):
     points = np.asarray(points)
@@ -48,7 +53,7 @@ def get_cluster_centroids(points, normals, labels):
         mean_normal = cluster_normals.mean(axis=0)
         mean_normal /= np.linalg.norm(mean_normal)  # Re-normalize
 
-        cluster_centroids.append((mean_point, mean_normal))
+        cluster_centroids.append([mean_point, mean_normal])
 
     return cluster_centroids
 
@@ -95,10 +100,6 @@ def normal_to_pose_matrix(point, normal, pitch_degrees=0):
     return T
 
 
-# Run in terminal using:
-# python -m gaze_processing.select_camera
-
-
 SERIAL_NO_81 = '317422074281'  # Camera serial number
 SERIAL_NO_56 = '317422075456'
 # Load calibration data
@@ -112,8 +113,6 @@ TCR = [TCR_81, TCR_56]
 
 realsense_streamer_81 = RealsenseStreamer(SERIAL_NO_81)
 realsense_streamer_56 = RealsenseStreamer(SERIAL_NO_56)
-
-base_link_color = [[1, 0.6, 0.8],  [1, 1, 0], [1, 0.5, 0], [0.4, 0, 0.8]]
 
 def capture_and_process_rgbd(realsense_streamer):
     points_3d, colors, _, realsense_img, depth_frame, depth_image = realsense_streamer.capture_rgbdpc()
@@ -173,14 +172,58 @@ def select_viewpts(points, streamers, depth_frames, realsense_imgs,TCR, threshol
 
     distance = np.linalg.norm(np.array(world_points[0]) - np.array(world_points[1]))
     if distance > threshold:
-        print(f"Potential occlusion detected between points {points[0]} and {points[1]}. Distance: {distance:.2f} m")
-        return True, gaze_images
+        print(f"Potential occlusion detected between points {world_points[0]} and {world_points[1]}. Distance: {distance:.2f} m")
+        return True, gaze_images, world_points
     else:   
-        return False, None
+        return False, None, world_points
 
+def filter_points_by_radius(points, normals, center_point, radius):
+    """
+    Filters points and normals based on distance from a center point.
+
+    Args:
+        points: (N, 3) array of 3D points.
+        normals: (N, 3) array of corresponding normals.
+        center_point: (3,) array representing the center.
+        radius: scalar distance threshold.
+
+    Returns:
+        filtered_points: (M, 3) array of filtered points.
+        filtered_normals: (M, 3) array of filtered normals.
+    """
+    points = np.asarray(points)
+    normals = np.asarray(normals)
+    center_point = np.asarray(center_point)
+
+    distances = np.linalg.norm(points - center_point, axis=1)
+    mask = distances <= radius
+    filtered_points = points[mask]
+    filtered_normals = normals[mask]
+
+    # --- Visualization ---
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(points)
+    pcd.normals = o3d.utility.Vector3dVector(normals)
+
+    filtered_pcd = o3d.geometry.PointCloud()
+    filtered_pcd.points = o3d.utility.Vector3dVector(filtered_points)
+    if filtered_normals.size > 0:
+        filtered_pcd.normals = o3d.utility.Vector3dVector(filtered_normals)
+    filtered_pcd.paint_uniform_color([1, 0, 0])  # Paint filtered points red
+
+    # Create a bounding box (sphere approximation for visualization)
+    bounding_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=radius)
+    bounding_sphere.translate(center_point)
+    bounding_sphere.paint_uniform_color([0, 0, 1])  # Paint bounding box blue
+
+    # Visualize
+    o3d.visualization.draw_geometries([pcd, filtered_pcd, bounding_sphere])
+
+    return filtered_points, filtered_normals
 
 if __name__ == "__main__":
 
+    base_link_color = [[1, 0.6, 0.8],  [1, 1, 0], [1, 0.5, 0], [0.4, 0, 0.8]]
     streamers = [realsense_streamer_81, realsense_streamer_56]
     results = [capture_and_process_rgbd(streamer) for streamer in streamers]
     pcds, realsense_imgs, depth_frames, depth_images = zip(*results)
@@ -188,20 +231,28 @@ if __name__ == "__main__":
     pixel_selector_81 = PixelSelector()
     pixel_selector_56 = PixelSelector()
     pixels_81, img_81 = pixel_selector_81.run(realsense_imgs[0])
-    print(pixels_81)
     pixels_56, img_56 = pixel_selector_56.run(realsense_imgs[1])
-    print(pixels_56)
-
     pixels = pixels_81
     pixels.extend(pixels_56)
     print(pixels)
+    boolean, gaze_images, world_points = select_viewpts(pixels, streamers, depth_frames, realsense_imgs, TCR)
+    if gaze_images:
+        for i in range(len(gaze_images)):
+            cv2.imshow(f"gaze_image_{i}", gaze_images[i])
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
 
-    pcd = pcds[0]
-    pcd.estimate_normals(
-    search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30)
-    )
-    normals = np.asarray(pcd.normals)
-    points = np.asarray(pcd.points)
+    '''pcd = pcds[0]
+    points_3d_homog = np.vstack((np.array(pcd.points).T, np.ones((1, np.array(pcd.points).shape[0]))))  # Shape: (4, N)
+    transformed_points_homog = TCR[0] @ points_3d_homog
+    transformed_points = transformed_points_homog[:3, :].T # Extract x, y, z and transpose
+
+    # Convert the NumPy array to an Open3D Vector3dVector
+    pcd.points = o3d.utility.Vector3dVector(transformed_points)
+    pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
+    print(f"Original points: {np.asarray(pcd.points).shape}, normals: {np.asarray(pcd.normals).shape}")
+    points, normals = filter_points_by_radius(np.asarray(pcd.points), np.asarray(pcd.normals), world_points[0], 0.1)
+    print(f"Filtered points: {points.shape}, normals: {normals.shape}")
     labels = cluster_normals_with_position(points, normals, n_clusters=5, direction_weight=0.4)
     centroids = get_cluster_centroids(points, normals, labels)
     print(labels)
@@ -209,15 +260,18 @@ if __name__ == "__main__":
 
     for i, (pt, n) in enumerate(centroids):
         T = normal_to_pose_matrix(pt, n, pitch_degrees=30)  # You can change pitch here
+        centroids[i].append(T)
+        # Visualize the cluster
+        vis = o3d.visualization.Visualizer()
+        window_width = 4988
+        window_height = 2742
+        vis.create_window(width=window_width, height=window_height)
+        visualize_gripper_with_cylinders(vis, T, pcd, base_color=[base_link_color[i % len(base_link_color)]])
         print(f"Cluster {i} Pose Matrix:\n{T}\n, Point {pt}, Normal {n}")
-
+        vis.run()
+        vis.destroy_window()
+'''
     # Visualize
     #o3d.visualization.draw_geometries([pcd], point_show_normal=True)
 
 
-    boolean, gaze_images = select_viewpts(pixels, streamers, depth_frames, realsense_imgs, TCR)
-    if gaze_images:
-        for i in range(len(gaze_images)):
-            cv2.imshow(f"gaze_image_{i}", gaze_images[i])
-            cv2.waitKey(0)
-            cv2.destroyAllWindows()

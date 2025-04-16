@@ -17,7 +17,7 @@ from pointnet_util import pointnet_sa_module, pointnet_fp_module, pointnet_sa_mo
 from tf_sampling import farthest_point_sample, gather_point
 from tf_grouping import query_ball_point, group_point, knn_point
 
-import mesh_utils
+import contact_graspnet.mesh_utils
 
 def placeholder_inputs(batch_size, num_input_points=20000, input_normals=False):
     """

@@ -14,10 +14,10 @@ import numpy as np
 import open3d as o3d
 from scipy.spatial.transform import Rotation as R
 import time
-from pc_utils import merge_pcls
+from contact_graspnet.pc_utils import merge_pcls
 from rs_streamer import RealsenseStreamer, MarkSearch
-from calib_utils.solver import Solver
-from calib_utils.linalg_utils import transform
+from contact_graspnet.calib_utils.solver import Solver
+from contact_graspnet.calib_utils.linalg_utils import transform
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '/home/u-ril/URIL/xArm-Python-SDK'))
 from xarm import XArmAPI

@@ -8,14 +8,24 @@ import time
 import glob
 import open3d as o3d
 import numpy as np
-from grasp_selector import find_closest_grasp, find_distinct_grasps
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.insert(0, parent_dir)
+
+from load_np_file import load_np, full_path
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.join(BASE_DIR))
+print(f'BASE_DIR: {BASE_DIR}')
+from contact_graspnet.grasp_selector import find_closest_grasp, find_distinct_grasps
 #from meshes.visualize_gripper import visualize_gripper
 import tensorflow.compat.v1 as tf
 from segment.FastSAM.fastsam import FastSAM
 from segment.SAMInference import select_from_sam_everything
 from scipy.spatial.transform import Rotation
-from contact_grasp_estimator import GraspEstimator
-import config_utils
+#from contact_grasp_estimator import GraspEstimator
+#import config_utils
 from multicam import XarmEnv
 from rs_streamer import RealsenseStreamer
 
@@ -25,8 +35,8 @@ tf.disable_eager_execution()
 GRIPPER_SPEED, GRIPPER_FORCE, GRIPPER_MAX_WIDTH, GRIPPER_TOLERANCE = 0.1, 40, 0.08570, 0.01
 SERIAL_NO_81 = '317422074281'  # Camera serial number
 SERIAL_NO_56 = '317422075456'
-# Load calibration data
-transforms = np.load('calib/transforms.npy', allow_pickle=True).item()
+# Load calibration data 
+transforms = np.load(full_path('transforms.npy'), allow_pickle=True).item()
 TCR_81 = transforms[SERIAL_NO_81]['tcr']
 TCR_56 = transforms[SERIAL_NO_56]['tcr']
 TCR_81[:3, 3] /= 1000.0
@@ -35,8 +45,6 @@ TCR_56[:3, 3] /= 1000.0
 physical_devices = tf.config.experimental.list_physical_devices('GPU')
 print(f'GPUs: {physical_devices}')
 tf.config.experimental.set_memory_growth(physical_devices[0], True)
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(os.path.join(BASE_DIR))
 
 base_link_color = [[1, 0.6, 0.8],  [1, 1, 0], [1, 0.5, 0], [0.4, 0, 0.8]]
 # Initialize robot
@@ -155,7 +163,8 @@ def capture_and_process_rgbd(realsense_streamer):
     pcd.colors = o3d.utility.Vector3dVector(colors)
     return pcd, realsense_img, depth_frame, depth_image
 
-if __name__ == "__main__":
+def pour():
+#if __name__ == "__main__":
 
     realsense_streamer_81 = RealsenseStreamer(SERIAL_NO_81)
     realsense_streamer_56 = RealsenseStreamer(SERIAL_NO_56)

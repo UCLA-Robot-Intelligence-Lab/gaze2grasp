@@ -8,14 +8,14 @@ import time
 import glob
 import open3d as o3d
 import numpy as np
-from grasp_selector import find_closest_grasp, find_distinct_grasps
+from contact_graspnet.grasp_selector import find_closest_grasp, find_distinct_grasps
 #from meshes.visualize_gripper import visualize_gripper
 import tensorflow.compat.v1 as tf
 from segment.FastSAM.fastsam import FastSAM
 from segment.SAMInference import select_from_sam_everything
 from scipy.spatial.transform import Rotation
-from contact_grasp_estimator import GraspEstimator
-import config_utils
+from contact_graspnet.contact_grasp_estimator import GraspEstimator
+import contact_graspnet.config_utils
 from multicam import XarmEnv
 from rs_streamer import RealsenseStreamer
 
@@ -31,6 +31,8 @@ TCR_81 = transforms[SERIAL_NO_81]['tcr']
 TCR_56 = transforms[SERIAL_NO_56]['tcr']
 TCR_81[:3, 3] /= 1000.0
 TCR_56[:3, 3] /= 1000.0
+
+base_link_color = [[1, 0.6, 0.8],  [1, 1, 0], [1, 0.5, 0], [0.4, 0, 0.8]]
 
 physical_devices = tf.config.experimental.list_physical_devices('GPU')
 print(f'GPUs: {physical_devices}')
@@ -147,7 +149,7 @@ def create_cylinder(start_point, end_point, radius, color):
     return cylinder_segment
 
 # Function to visualize gripper
-def visualize_gripper_with_cylinders(vis, grasps, pcd, connections, base_color):
+def visualize_gripper_with_cylinders(vis, grasps, pcd, connections=connections, base_color=base_link_color):
     if grasps.size == 16:  
         grasps = [grasps]
     if type(base_color[0]) != list:
@@ -406,7 +408,7 @@ if __name__ == "__main__":
     parser.add_argument('--arg_configs', nargs="*", type=str, default=[], help='overwrite config parameters')
     FLAGS = parser.parse_args()
 
-    global_config = config_utils.load_config(FLAGS.ckpt_dir, batch_size=FLAGS.forward_passes, arg_configs=FLAGS.arg_configs)
+    global_config = contact_graspnet.config_utils.load_config(FLAGS.ckpt_dir, batch_size=FLAGS.forward_passes, arg_configs=FLAGS.arg_configs)
     realsense_streamer_81 = RealsenseStreamer(SERIAL_NO_81)
     realsense_streamer_56 = RealsenseStreamer(SERIAL_NO_56)
 
@@ -489,7 +491,6 @@ if __name__ == "__main__":
         merged_pcd, transformed_pcds, pred_grasps_cam, _, _, pred_gripper_openings = predict_grasps(grasp_estimator, sess, depth_images, np.array(segmented_cam_imgs), np.array([streamers[0].K, streamers[1].K]), np.array([TCR_81, TCR_56]), rgb = realsense_imgs)
         print('Predicted grasps:', pred_grasps_cam[True].shape[0])
         
-        
         #vis.create_window()
         # Visualize all the predicted grasps
         visualize_gripper_with_cylinders(vis, pred_grasps_cam[True], merged_pcd, connections, [[0, 0, 0] for _ in range(pred_grasps_cam[True].shape[0])])
@@ -559,6 +560,18 @@ if __name__ == "__main__":
         intermediate_pos, positions, orientations, openings =  generate_and_visualize_grasps(semantic_waypoint, depth_images, segmented_cam_imgs, streamers, grasp_estimator, sess, full_save_folder)
         
         # To have the VLM select
+        try:
+            # consider moving this back up to the top with the rest of the imports??
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            parent_dir = os.path.dirname(current_dir)
+            sys.path.insert(0, parent_dir)
+
+            from vlm_reason import vlm_select_pose
+            optimal_pose = vlm_select_pose.gemini_select_pose(some_image) #idk where the image comes from
+        except:
+            pass
+
+
         position_fingertip = intermediate_pos[-1]
         position_ee = positions[-1]
         roll, pitch, yaw = orientations[-1]

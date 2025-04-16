@@ -8,14 +8,21 @@ import time
 import glob
 import open3d as o3d
 import numpy as np
-from grasp_selector import find_closest_grasp, find_distinct_grasps
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.insert(0, parent_dir)
+
+from load_np_file import load_np, full_path
+
+from contact_graspnet.grasp_selector import find_closest_grasp, find_distinct_grasps
 #from meshes.visualize_gripper import visualize_gripper
 import tensorflow.compat.v1 as tf
 from segment.FastSAM.fastsam import FastSAM
 from segment.SAMInference import select_from_sam_everything
 from scipy.spatial.transform import Rotation
-from contact_grasp_estimator import GraspEstimator
-import config_utils
+from contact_graspnet.contact_grasp_estimator import GraspEstimator
+import contact_graspnet.config_utils as config_utils
 from multicam import XarmEnv
 from rs_streamer import RealsenseStreamer
 
@@ -26,7 +33,7 @@ GRIPPER_SPEED, GRIPPER_FORCE, GRIPPER_MAX_WIDTH, GRIPPER_TOLERANCE = 0.1, 40, 0.
 SERIAL_NO_81 = '317422074281'  # Camera serial number
 SERIAL_NO_56 = '317422075456'
 # Load calibration data
-transforms = np.load('calib/transforms.npy', allow_pickle=True).item()
+transforms = np.load(full_path('transforms.npy'), allow_pickle=True).item()
 TCR_81 = transforms[SERIAL_NO_81]['tcr']
 TCR_56 = transforms[SERIAL_NO_56]['tcr']
 TCR_81[:3, 3] /= 1000.0
@@ -320,14 +327,15 @@ def load_intrinsic_matrix(file_path):
     intrinsic = o3d.camera.PinholeCameraIntrinsic(width, height, intrinsic_matrix[0, 0], intrinsic_matrix[1, 1], intrinsic_matrix[0, 2], intrinsic_matrix[1, 2])
     return intrinsic
 
-extrinsic_matrix = np.load(f"./calib/extrinsic_combined1.npy")
-extrinsic_matrix1 = np.load(f"./calib/extrinsic_combined2.npy")
-extrinsic_matrix2 = np.load(f"./calib/extrinsic_combined3.npy")
-extrinsic_matrix3 = np.load(f"./calib/extrinsic_combined4.npy")
-intrinsic = load_intrinsic_matrix(f"./calib/intrinsic1.npy")
-intrinsic1 = load_intrinsic_matrix(f"./calib/intrinsic2.npy")
-intrinsic2 = load_intrinsic_matrix(f"./calib/intrinsic3.npy")
-intrinsic3 = load_intrinsic_matrix(f"./calib/intrinsic4.npy")
+extrinsic_matrix = np.load(full_path("extrinsic_combined1.npy"))
+extrinsic_matrix1 = np.load(full_path("extrinsic_combined2.npy"))
+extrinsic_matrix2 = np.load(full_path("extrinsic_combined3.npy"))
+extrinsic_matrix3 = np.load(full_path("extrinsic_combined4.npy"))
+intrinsic = load_intrinsic_matrix(full_path("intrinsic1.npy"))
+intrinsic1 = load_intrinsic_matrix(full_path("intrinsic2.npy"))
+intrinsic2 = load_intrinsic_matrix(full_path("intrinsic3.npy"))
+intrinsic3 = load_intrinsic_matrix(full_path("intrinsic4.npy"))
+print('successfully loaded all intrinsics!')
 
 base_link_color = [[1, 0.6, 0.8],  [1, 1, 0], [1, 0.5, 0], [0.4, 0, 0.8]]
 
@@ -401,8 +409,8 @@ def generate_and_visualize_grasps(semantic_waypoint, depth_images, segmented_cam
 
     return intermediate_pos, positions, orientations, openings
     
-
-if __name__ == "__main__":
+def open_micro_contact_graspnet():
+#if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--ckpt_dir', default='checkpoints/scene_test_2048_bs3_hor_sigma_001', help='Log dir [default: checkpoints/scene_test_2048_bs3_hor_sigma_001]')#default='checkpoints/scene_2048_bs3_rad2_32', help='Log dir [default: checkpoints/scene_2048_bs3_rad2_32]') 
     #parser.add_argument('--np_path', default='test_data/7.npy', help='Input data: npz/npy file with keys either "depth" & camera matrix "K" or just point cloud "pc" in meters. Optionally, a 2D "segmap"')

@@ -100,6 +100,12 @@ This project combines gaze tracking, vision-language models (VLMs), and robotic 
 5. **VLM Integration**: Selected grasps are visualized and optionally used to train/infer with a vision-language model.
 6. **Robot Control**: The robot moves based on the inferred gaze and selected grasp.
 
+## VLM Integrations (Indepth)
+The VLM should be called 3 times:
+1. gaze_processing/gaze_intent_visualization.py - VLM function call best choice given the gaze points
+2. gaze_processing.select_camera - VLM select the optimal camera view
+3. visualizations.live_visualization - User (manually) selects gaze points and VLM takes those images and figures out the optimal pose (out of top 4 options) 
+
 ---
 
 ## 📝 TODOs

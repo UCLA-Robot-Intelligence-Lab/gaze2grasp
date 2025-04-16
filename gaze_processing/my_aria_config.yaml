@@ -1,0 +1,30 @@
+log_level: "Info"       # "Trace", "Debug" for more verbose logging
+rgb_cam_res: [1408, 1408]   # [2880, 2880] or [704, 704]
+et_cam_res: [640, 480]      # [320, 240]
+
+# streaming settings
+streaming:
+    message_queue_size:
+        rgb: 1
+        eye_track: 1
+    use_ephemeral_certs: true
+    data_types:
+        - "rgb"
+        - "et"
+    rgb_stream_label: "camera-rgb"
+
+# gaze settings
+gaze:
+    depth_m: 1.0            # depth in meters for gaze projection
+    history_size: 100
+
+# Visualization settings
+visualization:
+    window_name: "rgb"
+    window_size: [1024, 1024]
+    window_position: [50, 50]
+    gaze_point_color: [0, 255, 0]  # BGR format
+    gaze_point_radius: 5
+    gaze_point_thickness: 10
+    gaze_history_color: [0, 0, 255]  # BGR format
+    gaze_history_radius: 2

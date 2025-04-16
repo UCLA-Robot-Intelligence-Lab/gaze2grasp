@@ -1,7 +1,14 @@
 import cv2
 import numpy as np
 import os
+import sys
+import open3d as o3d
+import numpy as np
 
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.join(BASE_DIR))
+print(f'BASE_DIR: {BASE_DIR}')
+from rs_streamer import RealsenseStreamer
 base_link_color = [[0.2, 0.2, 0.8], [0.2, 0.8, 0.2], [0.8, 0.2, 0.2],
                    [0.8, 0.8, 0.2], [0.8, 0.2, 0.8], [0.2, 0.8, 0.8]]
 
@@ -86,11 +93,24 @@ class PixelSelector:
                 cv2.imwrite(os.path.join(dirname, f"{filename_base}_original.png"), self.img_original)
                 cv2.imwrite(os.path.join(dirname, f"{filename_base}_clicks.png"), self.img_display)
             return self.clicks, self.img_original, self.img_display
+        
+def capture_and_process_rgbd(realsense_streamer):
+    points_3d, colors, _, realsense_img, depth_frame, depth_image = realsense_streamer.capture_rgbdpc()
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(points_3d)
+    pcd.colors = o3d.utility.Vector3dVector(colors)
+    return pcd, realsense_img, depth_frame, depth_image
 
-if __name__ == '__main__':
-    # Create a dummy image for testing
-    dummy_img = np.zeros((600, 800, 3), dtype=np.uint8)
-    dummy_img[:] = (100, 100, 100)  # Gray background
+if __name__ == "__main__":
+    SERIAL_NO_81 = '317422074281'  # Camera serial number
+    SERIAL_NO_56 = '317422075456'
+    realsense_streamer_81 = RealsenseStreamer(SERIAL_NO_81)
+    realsense_streamer_56 = RealsenseStreamer(SERIAL_NO_56)
+
+    streamers = [realsense_streamer_81, realsense_streamer_56]
+    results = [capture_and_process_rgbd(streamer) for streamer in streamers]
+    pcds, realsense_imgs, depth_frames, depth_images = zip(*results)
+    pcds, realsense_imgs, depth_frames, depth_images = np.array(pcds), np.array(realsense_imgs), np.array(depth_frames), np.array(depth_images)
 
     # Create a dummy save directory
     save_dir = "/home/u-ril/gaze2grasp/vlm_images/gaze_inputs"
@@ -98,17 +118,17 @@ if __name__ == '__main__':
     save_file_direct = os.path.join(save_dir, "test_image_direct.png")
     save_file_click = os.path.join(save_dir, "test_image_click.png")
 
-    # Directly input an array of coordinates
+    '''# Directly input an array of coordinates
     initial_coordinates = [[150, 100], [300, 250]]
     selector_direct = PixelSelector()
     clicked_pixels_direct, original_img_direct, clicks_img_direct = selector_direct.run(
-        dummy_img, initial_clicks=initial_coordinates, save_path=save_file_direct
+        realsense_imgs[0], initial_clicks=initial_coordinates, save_path=save_file_direct
     )
-    print("Direct input clicks:", clicked_pixels_direct)
+    print("Direct input clicks:", clicked_pixels_direct)'''
 
     # Use the pixel selector for clicking
     selector_click = PixelSelector()
     clicked_pixels_click, original_img_click, clicks_img_click = selector_click.run(
-        dummy_img, save_path=save_file_click
+        realsense_imgs[0], save_path=save_file_click
     )
     print("Clicked pixels:", clicked_pixels_click)
