@@ -230,7 +230,8 @@ def segment_image(realsense_img, gaze):
 def predict_grasps(grasp_estimator, sess, depth_image, segmented_cam_img, K, TCR, rgb):
     return grasp_estimator.predict_scene_grasps_from_depth_K_and_2d_seg(sess, depth_image, segmented_cam_img, K, TCR, rgb = rgb, local_regions=True, filter_grasps=True)
 
-def set_camera_view_and_save_image(vis, intrinsic, extrinsic_matrix, output_filename):
+
+def set_camera_view_and_save_image(vis, intrinsic, extrinsic_matrix, output_filename, center = ([200,0,0])):
     view_control = vis.get_view_control()
     param = view_control.convert_to_pinhole_camera_parameters()
     param.intrinsic = intrinsic
@@ -249,9 +250,20 @@ def set_camera_view_and_save_image(vis, intrinsic, extrinsic_matrix, output_file
 
     crop_height = 480
     crop_width = 854
+    
+    intrinsic_np = intrinsic.intrinsic_matrix
+    # Transform the 3D point to the camera coordinate system
+    point_homogeneous = np.append(center, 1.0)
+    point_camera = extrinsic_matrix @ point_homogeneous[:4]
+    point_camera_xyz = point_camera[:3]
 
-    center_y = height // 2
-    center_x = width // 2
+    # Project to 2D using the intrinsic matrix
+    if point_camera_xyz[2] <= 0:  # Point is behind the camera
+        return None
+
+    projection = intrinsic_np @ point_camera_xyz
+    center_x = int(projection[0] / projection[2])
+    center_y = int(projection[1] / projection[2])
 
     ymin = center_y - crop_height // 2
     ymax = center_y + crop_height // 2
@@ -267,7 +279,8 @@ def set_camera_view_and_save_image(vis, intrinsic, extrinsic_matrix, output_file
 
     cv2.imwrite(output_filename, cv2.cvtColor(cropped_image_array, cv2.COLOR_RGB2BGR))
 
-def process_grasp(vis, merged_pcds, grasp, save_folder, i, base_link_color, view = True):
+
+def process_grasp(vis, merged_pcds, grasp, save_folder, i, base_link_color, view = True, center = ([2494,1371])):
     # Visualize and save gripper with cylinders
     if type(i) != int:
         color = base_link_color
@@ -275,20 +288,20 @@ def process_grasp(vis, merged_pcds, grasp, save_folder, i, base_link_color, view
         color = base_link_color[i]
     if view == "81":
         visualize_gripper_with_cylinders(vis, grasp, merged_pcds, connections, color)
-        set_camera_view_and_save_image(vis, intrinsic2, extrinsic_matrix2, os.path.join(save_folder, f"grasp_lines{i}.png"))
+        set_camera_view_and_save_image(vis, intrinsic2, extrinsic_matrix2, os.path.join(save_folder, f"grasp_lines{i}.png"), center)
         visualize_gripper_with_axes(vis, grasp, merged_pcds, color)
-        set_camera_view_and_save_image(vis, intrinsic2, extrinsic_matrix2, os.path.join(save_folder,f"grasp_axes{i}.png"))
+        set_camera_view_and_save_image(vis, intrinsic2, extrinsic_matrix2, os.path.join(save_folder,f"grasp_axes{i}.png"), center)
     elif view == "56":
         visualize_gripper_with_cylinders(vis, grasp, merged_pcds, connections, color)
-        set_camera_view_and_save_image(vis, intrinsic3, extrinsic_matrix3, os.path.join(save_folder, f"grasp_lines{i}.png"))
+        set_camera_view_and_save_image(vis, intrinsic3, extrinsic_matrix3, os.path.join(save_folder, f"grasp_lines{i}.png"), center)
         visualize_gripper_with_axes(vis, grasp, merged_pcds, color)
-        set_camera_view_and_save_image(vis, intrinsic3, extrinsic_matrix3, os.path.join(save_folder,f"grasp_axes{i}.png"))
+        set_camera_view_and_save_image(vis, intrinsic3, extrinsic_matrix3, os.path.join(save_folder,f"grasp_axes{i}.png"), center)
     else:
         visualize_gripper_with_cylinders(vis, grasp, merged_pcds, connections, color)
-        set_camera_view_and_save_image(vis, intrinsic, extrinsic_matrix, os.path.join(save_folder, f"grasp_lines{i}a.png"))
-        set_camera_view_and_save_image(vis, intrinsic1, extrinsic_matrix1, os.path.join(save_folder, f"grasp_lines{i}b.png"))
-        set_camera_view_and_save_image(vis, intrinsic2, extrinsic_matrix2, os.path.join(save_folder, f"grasp_lines{i}c.png"))
-        set_camera_view_and_save_image(vis, intrinsic3, extrinsic_matrix3, os.path.join(save_folder, f"grasp_lines{i}d.png"))
+        set_camera_view_and_save_image(vis, intrinsic, extrinsic_matrix, os.path.join(save_folder, f"grasp_lines{i}a.png"), center)
+        set_camera_view_and_save_image(vis, intrinsic1, extrinsic_matrix1, os.path.join(save_folder, f"grasp_lines{i}b.png"), center)
+        set_camera_view_and_save_image(vis, intrinsic2, extrinsic_matrix2, os.path.join(save_folder, f"grasp_lines{i}c.png"), center)
+        set_camera_view_and_save_image(vis, intrinsic3, extrinsic_matrix3, os.path.join(save_folder, f"grasp_lines{i}d.png"), center)
 
         # Visualize and save gripper with arm
         #visualize_gripper_with_arm(vis, grasp, merged_pcds, color)
@@ -297,10 +310,10 @@ def process_grasp(vis, merged_pcds, grasp, save_folder, i, base_link_color, view
 
         # Visualize and save gripper with axes
         visualize_gripper_with_axes(vis, grasp, merged_pcds, color)
-        set_camera_view_and_save_image(vis, intrinsic, extrinsic_matrix, os.path.join(save_folder,f"grasp_axes{i}a.png"))
-        set_camera_view_and_save_image(vis, intrinsic1, extrinsic_matrix1, os.path.join(save_folder,f"grasp_axes{i}b.png"))
-        set_camera_view_and_save_image(vis, intrinsic2, extrinsic_matrix2, os.path.join(save_folder,f"grasp_axes{i}c.png"))
-        set_camera_view_and_save_image(vis, intrinsic3, extrinsic_matrix3, os.path.join(save_folder,f"grasp_axes{i}d.png"))
+        set_camera_view_and_save_image(vis, intrinsic, extrinsic_matrix, os.path.join(save_folder,f"grasp_axes{i}a.png"), center)
+        set_camera_view_and_save_image(vis, intrinsic1, extrinsic_matrix1, os.path.join(save_folder,f"grasp_axes{i}b.png"), center)
+        set_camera_view_and_save_image(vis, intrinsic2, extrinsic_matrix2, os.path.join(save_folder,f"grasp_axes{i}c.png"), center)
+        set_camera_view_and_save_image(vis, intrinsic3, extrinsic_matrix3, os.path.join(save_folder,f"grasp_axes{i}d.png"), center)
     
 def load_intrinsic_matrix(file_path):
     """Loads the intrinsic matrix from a .npy file."""
@@ -321,7 +334,6 @@ intrinsic2 = load_intrinsic_matrix(f"./calib/intrinsic3.npy")
 intrinsic3 = load_intrinsic_matrix(f"./calib/intrinsic4.npy")
 
 base_link_color = [[1, 0.6, 0.8],  [1, 1, 0], [1, 0.5, 0], [0.4, 0, 0.8]]
-
 def generate_and_visualize_grasps(semantic_waypoint, depth_images, segmented_cam_imgs, streamers, grasp_estimator, sess, full_save_folder):
     depth_images = np.array(depth_images) / 1000  # Convert list to array first
     merged_pcd, transformed_pcds, pred_grasps_cam, _, _, pred_gripper_openings = predict_grasps(grasp_estimator, sess, depth_images, np.array(segmented_cam_imgs), np.array([streamers[0].K, streamers[1].K]), np.array([TCR_81, TCR_56]), rgb = realsense_imgs)
@@ -340,7 +352,7 @@ def generate_and_visualize_grasps(semantic_waypoint, depth_images, segmented_cam
     origin = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
     vis.add_geometry(origin)
     vis.run()
-    set_camera_view_and_save_image(vis, intrinsic, extrinsic_matrix, os.path.join(full_save_folder, F"pred_grasp_lines_w_gaze.png")) 
+    set_camera_view_and_save_image(vis, intrinsic, extrinsic_matrix, os.path.join(full_save_folder, F"pred_grasp_lines_w_gaze.png"), center = semantic_waypoint) 
 
 
     distinct_grasps, distinct_openings = find_distinct_grasps(pred_grasps_cam, pred_gripper_openings, semantic_waypoint, n_grasps=3, max_distance=0.2)
@@ -352,10 +364,10 @@ def generate_and_visualize_grasps(semantic_waypoint, depth_images, segmented_cam
     grasps = np.array(grasps)
     openings = np.array(openings)*1000
     intermediate_pos, positions, orientations = [], [], []
-    '''vis = o3d.visualization.Visualizer()
+    vis = o3d.visualization.Visualizer()
     window_width = 4988
     window_height = 2742
-    vis.create_window(width=window_width, height=window_height)'''
+    vis.create_window(width=window_width, height=window_height)
     for i, grasp in enumerate(grasps):
         # Visualizing with merged point cloud
         #os.makedirs(os.path.join(full_save_folder, "pcd_combined"), exist_ok=True)
@@ -363,8 +375,8 @@ def generate_and_visualize_grasps(semantic_waypoint, depth_images, segmented_cam
         # Visualizing with individual point cloud
         os.makedirs(os.path.join(full_save_folder, "pcd81"), exist_ok=True)
         os.makedirs(os.path.join(full_save_folder, "pcd56"), exist_ok=True)
-        process_grasp(vis, transformed_pcds[0], grasp, os.path.join(full_save_folder, "pcd81"), i, base_link_color, view = "81")
-        process_grasp(vis, transformed_pcds[1], grasp, os.path.join(full_save_folder, "pcd56"), i, base_link_color, view = "56")
+        process_grasp(vis, transformed_pcds[0], grasp, os.path.join(full_save_folder, "pcd81"), i, base_link_color, view = "81", center = semantic_waypoint)
+        process_grasp(vis, transformed_pcds[1], grasp, os.path.join(full_save_folder, "pcd56"), i, base_link_color, view = "56", center = semantic_waypoint)
         
         position_fingertip = 1000 * grasp[:3, 3]
         position_fingertip[2] = position_fingertip[2]+157
@@ -382,8 +394,8 @@ def generate_and_visualize_grasps(semantic_waypoint, depth_images, segmented_cam
         orientations.append([roll, pitch, yaw])
     # Visualizing all grasps
     #process_grasp(vis, merged_pcd, grasps, os.path.join(full_save_folder, "pcd_combined"), '_all_', base_link_color)
-    process_grasp(vis, transformed_pcds[0], grasps, os.path.join(full_save_folder, "pcd81"), '_all_', base_link_color, view = "81")
-    process_grasp(vis, transformed_pcds[1], grasps, os.path.join(full_save_folder, "pcd56"), '_all_', base_link_color, view = "56")
+    process_grasp(vis, transformed_pcds[0], grasps, os.path.join(full_save_folder, "pcd81"), '_all_', base_link_color, view = "81", center = semantic_waypoint)
+    process_grasp(vis, transformed_pcds[1], grasps, os.path.join(full_save_folder, "pcd56"), '_all_', base_link_color, view = "56", center = semantic_waypoint)
 
     # Saving all the data
     data = np.array(list(zip(grasps, intermediate_pos, positions, orientations)), dtype=object)
@@ -391,7 +403,6 @@ def generate_and_visualize_grasps(semantic_waypoint, depth_images, segmented_cam
     vis.destroy_window()
 
     return intermediate_pos, positions, orientations, openings
-    
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

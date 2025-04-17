@@ -18,7 +18,7 @@ client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 def gemini_select_camera(image_path_1, image_path_2):
 
     prompt = """
-        You will be given two camera views. Choose 
+        You will be given two camera views. Choose the view that is the most clear and unobstructed for the given task. Output the number 1 or 2 only. 
     """
 
     img_1 = PIL.Image.open(image_path_1)
@@ -29,17 +29,7 @@ def gemini_select_camera(image_path_1, image_path_2):
         contents=[prompt, img_1, img_2],
     )
 
-    parse = response.text[7:-3]
-    try:
-        json_response = json.loads(response.text[7:-3])
-        #print(json_response)
-        print(f'Final guess: {json_response["Final Pose"]}')
-        print(f'Justification: {json_response["justification"]}')
-        return json_response["Final Pose"]
-    except Exception as e:
-        print('Something went wrong')
-        print(e)
-        return None
+    print(response.text)
 
 if __name__ == "__main__":
     gemini_select_camera("/home/u-ril/gaze2grasp/vlm_images/coffee2_yellow/pcd_combined/grasp_lines_all_c.png")

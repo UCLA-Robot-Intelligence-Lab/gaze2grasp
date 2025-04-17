@@ -113,10 +113,8 @@ if __name__ == "__main__":
     pcds, realsense_imgs, depth_frames, depth_images = np.array(pcds), np.array(realsense_imgs), np.array(depth_frames), np.array(depth_images)
 
     # Create a dummy save directory
-    save_dir = "/home/u-ril/gaze2grasp/vlm_images/gaze_inputs"
-    os.makedirs(save_dir, exist_ok=True)
-    save_file_direct = os.path.join(save_dir, "test_image_direct.png")
-    save_file_click = os.path.join(save_dir, "test_image_click.png")
+    
+    #save_file_direct = os.path.join(save_dir, "test_image_direct.png")
 
     '''# Directly input an array of coordinates
     initial_coordinates = [[150, 100], [300, 250]]
@@ -128,7 +126,18 @@ if __name__ == "__main__":
 
     # Use the pixel selector for clicking
     selector_click = PixelSelector()
+    save_dir = "/home/u-ril/gaze2grasp/vlm_images/gaze_inputs"
+    os.makedirs(save_dir, exist_ok=True)
+    save_file_click = os.path.join(save_dir, "81.png")
     clicked_pixels_click, original_img_click, clicks_img_click = selector_click.run(
         realsense_imgs[0], save_path=save_file_click
+    )
+    print("Clicked pixels:", clicked_pixels_click)
+
+    # Use the pixel selector for clicking
+    selector_click = PixelSelector()
+    save_file_click = os.path.join(save_dir, "56.png")
+    clicked_pixels_click, original_img_click, clicks_img_click = selector_click.run(
+        realsense_imgs[1], save_path=save_file_click
     )
     print("Clicked pixels:", clicked_pixels_click)

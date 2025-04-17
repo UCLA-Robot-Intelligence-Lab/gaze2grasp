@@ -272,6 +272,8 @@ if __name__ == "__main__":
         vis.destroy_window()
 '''
     # Visualize
+    #pcd = pcds[0]
+    #pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
     #o3d.visualization.draw_geometries([pcd], point_show_normal=True)
 
 

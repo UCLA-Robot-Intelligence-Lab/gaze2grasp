@@ -206,12 +206,12 @@ class GraspEstimator:
 
         pc_regions = {}
         obj_centers = {}
-        #geometries = []  # List to hold all geometries for visualization
+        geometries = []  # List to hold all geometries for visualization
 
         # Convert full_pc to Open3D PointCloud for visualization
-        #full_pcd = o3d.geometry.PointCloud()
-        #full_pcd.points = o3d.utility.Vector3dVector(full_pc)
-        #geometries.append(full_pcd)
+        full_pcd = o3d.geometry.PointCloud()
+        full_pcd.points = o3d.utility.Vector3dVector(full_pc)
+        geometries.append(full_pcd)
 
         for i in pc_segments:
             pc_segments[i] = reject_median_outliers(pc_segments[i], m=0.4, z_only=False)
@@ -233,8 +233,8 @@ class GraspEstimator:
                 # Calculate bounds with precise alignment
                 lower_bound = obj_center - box_size / 2
                 upper_bound = obj_center + box_size / 2
-                #top_z = upper_bound[2]
-                #print(f"Z-coordinate of top of box for object {i}: {top_z}")
+                top_z = upper_bound[2]
+                print(f"Z-coordinate of top of box for object {i}: {top_z}")
                 # Apply maximum z-height constraint
                 upper_bound[2] = min(upper_bound[2], lower_bound[2] + max_z_height)
 
@@ -249,9 +249,9 @@ class GraspEstimator:
                     obj_centers[i] = obj_center
 
                     # Create and add bounding box to visualization
-                    #box = o3d.geometry.AxisAlignedBoundingBox(min_bound=lower_bound, max_bound=upper_bound)
-                    #box.color = (1, 0, 0)  # Red box
-                    #geometries.append(box)
+                    box = o3d.geometry.AxisAlignedBoundingBox(min_bound=lower_bound, max_bound=upper_bound)
+                    box.color = (1, 0, 0)  # Red box
+                    geometries.append(box)
 
                 else:
                     print(f"No points in full_pc satisfy the condition for object {i}")
@@ -259,7 +259,7 @@ class GraspEstimator:
                 print(f"pc_segments[{i}] is empty")
 
         # Visualize all geometries (point cloud and boxes)
-        #o3d.visualization.draw_geometries(geometries)
+        o3d.visualization.draw_geometries(geometries)
 
         return pc_regions, obj_centers
 
@@ -592,7 +592,7 @@ class GraspEstimator:
             merged_segments_rotated2 = {True: merged_segments_temp2}
 
 
-            '''# Visualize (optional, for debugging)
+            # Visualize (optional, for debugging)
             pcd_temp = o3d.geometry.PointCloud()
             pcd_temp.points = o3d.utility.Vector3dVector(pc_temp)
             pcd_temp1 = o3d.geometry.PointCloud()
@@ -608,7 +608,7 @@ class GraspEstimator:
             origin = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
             vis.add_geometry(origin)
             vis.run()
-            vis.destroy_window()'''
+            vis.destroy_window()
 
             # Predict grasps in the rotated frames
             pred_grasps_cam, scores, contact_pts, gripper_openings = self.predict_scene_grasps(

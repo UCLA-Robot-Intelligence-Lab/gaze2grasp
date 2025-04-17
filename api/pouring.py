@@ -1,35 +1,23 @@
 import pyrealsense2 as rs
 import cv2
-import math
 import os
 import sys
-import argparse
 import time
-import glob
 import open3d as o3d
 import numpy as np
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
+'''current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
-sys.path.insert(0, parent_dir)
+sys.path.insert(0, parent_dir)'''
 
 from load_np_file import load_np, full_path
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(os.path.join(BASE_DIR))
-print(f'BASE_DIR: {BASE_DIR}')
-from contact_graspnet.grasp_selector import find_closest_grasp, find_distinct_grasps
-#from meshes.visualize_gripper import visualize_gripper
-import tensorflow.compat.v1 as tf
-from segment.FastSAM.fastsam import FastSAM
-from segment.SAMInference import select_from_sam_everything
+from visualizations.live_visualization import segment_image, capture_and_process_rgbd
 from scipy.spatial.transform import Rotation
-#from contact_grasp_estimator import GraspEstimator
-#import config_utils
 from multicam import XarmEnv
 from rs_streamer import RealsenseStreamer
-
-tf.disable_eager_execution()
 
 # Constants
 GRIPPER_SPEED, GRIPPER_FORCE, GRIPPER_MAX_WIDTH, GRIPPER_TOLERANCE = 0.1, 40, 0.08570, 0.01
@@ -41,10 +29,6 @@ TCR_81 = transforms[SERIAL_NO_81]['tcr']
 TCR_56 = transforms[SERIAL_NO_56]['tcr']
 TCR_81[:3, 3] /= 1000.0
 TCR_56[:3, 3] /= 1000.0
-
-physical_devices = tf.config.experimental.list_physical_devices('GPU')
-print(f'GPUs: {physical_devices}')
-tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
 base_link_color = [[1, 0.6, 0.8],  [1, 1, 0], [1, 0.5, 0], [0.4, 0, 0.8]]
 # Initialize robot
@@ -84,12 +68,6 @@ class PixelSelector:
             if k == 27:
                 break
         return self.clicks, self.img
-    
-# Function to segment image using FastSAM
-def segment_image(realsense_img, gaze):
-    seg_model = FastSAM('./contact_graspnet/segment/FastSAM-s.pt')
-    segmented_cam_img, _ = select_from_sam_everything(seg_model, [gaze], input_img=realsense_img, imgsz=640, iou=0.9, conf=0.4, max_distance=5, max_mask_ratio = 0.2, retina=True)
-    return segmented_cam_img
 
 def calculate_final_pose(place_ee_world, averaged_pick_world, initial_pitch_deg=-50, final_pitch_deg=-10):
     """
@@ -154,14 +132,6 @@ def calculate_final_pose(place_ee_world, averaged_pick_world, initial_pitch_deg=
     place_position = place_ee_world + np.array([0, 0, 90])  # Increased z for clearance
 
     return pick_position, [roll_deg, initial_pitch_deg, yaw_deg], place_position, [final_roll_deg, final_pitch_deg_result, final_yaw_deg], approach_vector_unit
-
-# Function to capture and process RGBD data
-def capture_and_process_rgbd(realsense_streamer):
-    points_3d, colors, _, realsense_img, depth_frame, depth_image = realsense_streamer.capture_rgbdpc()
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(points_3d)
-    pcd.colors = o3d.utility.Vector3dVector(colors)
-    return pcd, realsense_img, depth_frame, depth_image
 
 def pour():
 #if __name__ == "__main__":

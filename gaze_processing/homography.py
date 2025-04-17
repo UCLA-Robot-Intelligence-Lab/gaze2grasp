@@ -1,7 +1,16 @@
 import cv2
 import numpy as np
 import pyrealsense2 as rs
+import sys
+import os
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.join(BASE_DIR))
+
 from rs_streamer import RealsenseStreamer
+
+SERIAL_NO_81 = '317422074281'  # Camera serial number
+SERIAL_NO_56 = '317422075456'
 
 def get_connected_devices():
     context = rs.context()
