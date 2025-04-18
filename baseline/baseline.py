@@ -11,8 +11,12 @@ from aria_glasses.utils.config_manager import ConfigManager
 import pdb
 from xarm.wrapper import XArmAPI
 
+# initialize the robot
+arm = XArmAPI("192.168.1.223")
 
 def go_home():
+    arm.motion_enable(enable=True)  # change to False under Sim!!!!!
+
     arm.set_mode(0)
     arm.set_state(state=0)
     arm.set_servo_angle(angle=[0, 0, 0, 105, 0, 105, 0], speed=50, wait=True)
@@ -61,7 +65,7 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--config_path",
-        default="my_aria_config.yaml",
+        default="./baseline/my_aria_config.yaml",
         action="store_true",
         help="Specify the path to the configuration file",
     )
@@ -80,7 +84,7 @@ def main():
     glasses = AriaGlasses(device_ip, config_path)
 
     glasses.start_streaming()
-    glasses.start_recording()
+    glasses.start_recording('./recordings')
 
     window_name, window_size, window_position = read_vis_params(config_manager)
     rgb_window = window_name
@@ -96,15 +100,15 @@ def main():
     aruco_params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX  # or CORNER_REFINE_APRILTAG
     detector = aruco.ArucoDetector(aruco_dict, aruco_params)
 
-    # initialize the robot
-    arm = XArmAPI("192.168.1.223")
+    # arm control
+    # go_home()
+
     arm.motion_enable(enable=True)  # change to False under Sim!!!!!
-    go_home()
 
     arm.set_mode(5)
     arm.set_state(state=0)
     time.sleep(1)
-
+    arm.set_gripper_enable(True)
     v_pos = 60
     v_rot = 15
     gripper_state = False
@@ -145,8 +149,10 @@ def main():
                     arm.set_gripper_enable(gripper_state)
                 else:
                     arm.vc_set_cartesian_velocity(id_to_control[gazed_id])
-                    # time.sleep(0.5)
+                    time.sleep(0.01)
                     # arm.vc_set_cartesian_velocity([0, 0, 0, 0, 0, 0])
+            else:
+                arm.vc_set_cartesian_velocity([0, 0, 0, 0, 0, 0])
 
     glasses.stop_recording()
     glasses.stop_streaming()

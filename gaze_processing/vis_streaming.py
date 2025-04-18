@@ -29,7 +29,7 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--config_path",
-        default="./gaze_processing/my_aria_config.yaml",
+        default="baseline/my_aria_config.yaml",
         action="store_true",
         help="Specify the path to the configuration file",
     )

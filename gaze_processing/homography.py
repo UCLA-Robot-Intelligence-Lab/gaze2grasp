@@ -86,8 +86,8 @@ class HomographyManager:
         self.depth_frame = depth_frame
         cam_corners, cam_ids = self.detect_aruco_markers(color_image)
 
-        if cam_ids is not None:
-            cv2.aruco.drawDetectedMarkers(color_image, cam_corners, cam_ids)
+        # if cam_ids is not None:
+        #     cv2.aruco.drawDetectedMarkers(color_image, cam_corners, cam_ids)
 
         matched_points_aria, matched_points_cam = self.match_aruco_markers(
             aria_corners, aria_ids, cam_corners, cam_ids
