@@ -14,7 +14,112 @@ def is_position_in_range(position, x_range=(0.060, 0.550), y_range=(-0.550, 0.55
     return (x_range[0] <= x <= x_range[1] and
             y_range[0] <= y <= y_range[1] and
             z_range[0] <= z <= z_range[1])
-            
+
+def translation_distance(g1, g2):
+    """Calculates the Euclidean distance between the translation vectors of two grasps."""
+    return np.linalg.norm(g1[:3, 3] - g2[:3, 3])
+
+def rotation_distance_quaternion(g1, g2):
+    """Calculates the Euclidean distance between the quaternion representations of two rotations."""
+    q1 = Rotation.from_matrix(g1[:3, :3]).as_quat()
+    q2 = Rotation.from_matrix(g2[:3, :3]).as_quat()
+    return np.linalg.norm(q1 - q2)
+
+def find_median_grasp_with_opening(grasps_with_openings, weight_t=1.0, weight_r=1.0):
+    """
+    Finds the median grasp (and its opening) from a list of grasp matrices and their openings
+    based on a weighted distance metric. The median grasp is the one that minimizes the
+    sum of its distances to all other grasps.
+
+    Args:
+        grasps_with_openings (list of tuples): A list where each tuple contains:
+            - grasp (np.ndarray): A 4x4 grasp matrix.
+            - opening (float): The corresponding gripper opening width.
+        weight_t (float): Weight for the translation distance.
+        weight_r (float): Weight for the rotation distance.
+
+    Returns:
+        tuple or None: A tuple containing the median grasp matrix and its opening,
+                       or None if the input list is empty.
+    """
+    if not grasps_with_openings:
+        return None
+
+    num_grasps = len(grasps_with_openings)
+    total_distances = np.zeros(num_grasps)
+
+    for i in range(num_grasps):
+        grasp_i, _ = grasps_with_openings[i]
+        for j in range(num_grasps):
+            grasp_j, _ = grasps_with_openings[j]
+            dist_t = translation_distance(grasp_i, grasp_j)
+            dist_r = rotation_distance_quaternion(grasp_i, grasp_j)
+            total_distances[i] += weight_t * dist_t + weight_r * dist_r
+
+    median_index = np.argmin(total_distances)
+    median_grasp, median_opening = grasps_with_openings[median_index]
+    return median_grasp, median_opening
+
+def find_median_grasp(pred_grasps_cam, pred_gripper_openings):
+    """
+    Finds the median grasp (and its opening) from the input grasp predictions.
+
+    Args:
+        pred_grasps_cam: Grasp predictions from the camera perspective. Can be a dictionary or a NumPy array.
+        pred_gripper_openings: Corresponding gripper opening widths. Must match structure of pred_grasps_cam.
+
+    Returns:
+        tuple or None: A tuple containing the median grasp matrix and its opening,
+                       or None if no valid grasps are found.
+    """
+    grasp_opening_pairs = []
+
+    if isinstance(pred_grasps_cam, dict):
+        for k in pred_grasps_cam:
+            if pred_grasps_cam[k].size > 0:
+                grasps = pred_grasps_cam[k]
+                openings = pred_gripper_openings[k] if isinstance(pred_gripper_openings, dict) else pred_gripper_openings
+                if grasps.ndim == 3:
+                    for i in range(len(grasps)):
+                        grasp_opening_pairs.append((grasps[i], openings[i]))
+                elif grasps.ndim == 2 and grasps.shape[1] >= 3:
+                    for i in range(len(grasps)):
+                        grasp_matrix = np.eye(4)
+                        grasp_matrix[:3, 3] = grasps[i, :3]
+                        grasp_opening_pairs.append((grasp_matrix, openings[i]))
+                elif grasps.ndim == 1 and grasps.shape[0] >= 3:
+                    grasp_matrix = np.eye(4)
+                    grasp_matrix[:3, 3] = grasps[:3]
+                    grasp_opening_pairs.append((grasp_matrix, openings))
+                else:
+                    raise ValueError(f"Unexpected shape for pred_grasps_cam[{k}]: {grasps.shape}")
+    else:
+        grasps = pred_grasps_cam
+        openings = pred_gripper_openings
+        if grasps.ndim == 3:
+            for i in range(len(grasps)):
+                grasp_opening_pairs.append((grasps[i], openings[i]))
+        elif grasps.ndim == 2 and grasps.shape[1] >= 3:
+            for i in range(len(grasps)):
+                grasp_matrix = np.eye(4)
+                grasp_matrix[:3, 3] = grasps[i, :3]
+                grasp_opening_pairs.append((grasp_matrix, openings[i]))
+        elif grasps.ndim == 1 and grasps.shape[0] >= 3:
+            grasp_matrix = np.eye(4)
+            grasp_matrix[:3, 3] = grasps[:3]
+            grasp_opening_pairs.append((grasp_matrix, openings))
+        else:
+            raise ValueError(f"Unexpected shape for pred_grasps_cam: {grasps.shape}")
+
+    if not grasp_opening_pairs:
+        print("No valid grasps found to calculate median.")
+        return None
+
+    median_grasp, median_opening = find_median_grasp_with_opening(grasp_opening_pairs)
+    print("MEDIAN GRASP:", median_grasp)
+    print("MEDIAN GRIPPER OPENING:", median_opening)
+    return median_grasp, median_opening
+
 def find_closest_grasp(pred_grasps_cam, pred_gripper_openings, semantic_waypoint, filter_in_range=True):
     """
     Finds the closest grasp to a semantic waypoint, optionally filtering by workspace range.
