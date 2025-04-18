@@ -13,7 +13,7 @@ import tensorflow.compat.v1 as tf
 from scipy.spatial.transform import Rotation
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(os.path.join(BASE_DIR))
-from contact_graspnet.grasp_selector import find_closest_grasp, find_distinct_grasps, find_median_grasp
+from contact_graspnet.grasp_selector import find_closest_grasp, find_distinct_grasps, find_median_grasp, filter_grasps_by_grasp_centre_distance
 from contact_graspnet.contact_grasp_estimator import GraspEstimator
 import contact_graspnet.config_utils
 from multicam import XarmEnv
@@ -34,11 +34,14 @@ TCR_56 = transforms[SERIAL_NO_56]['tcr']
 TCR_81[:3, 3] /= 1000.0
 TCR_56[:3, 3] /= 1000.0
 
-base_link_color = [[1, 0.6, 0.8],  [1, 1, 0], [1, 0.5, 0], [0.4, 0, 0.8]]
-
 physical_devices = tf.config.experimental.list_physical_devices('GPU')
 print(f'GPUs: {physical_devices}')
 tf.config.experimental.set_memory_growth(physical_devices[0], True)
+
+base_link_color = [[1, 0.6, 0.8], [1, 1, 0], [1, 0.5, 0], [0.4, 0, 0.8],
+ [0, 0.7, 1], [0.6, 0, 1], [0, 1, 0.3], [0.8, 0.4, 1],
+ [1, 0, 0.5], [0.2, 1, 1], [1, 0.8, 0.2], [0.5, 1, 0],
+ [0, 0.3, 1], [0.7, 0, 0.3], [1, 0.3, 0.6]]
 
 
 # Initialize robot
@@ -322,7 +325,7 @@ intrinsic1 = load_intrinsic_matrix(f"./calib/intrinsic2.npy")
 intrinsic2 = load_intrinsic_matrix(f"./calib/intrinsic3.npy")
 intrinsic3 = load_intrinsic_matrix(f"./calib/intrinsic4.npy")
 
-base_link_color = [[1, 0.6, 0.8],  [1, 1, 0], [1, 0.5, 0], [0.4, 0, 0.8]]
+
 
 def obtain_new_grasps(grasp_matrix):
     """
@@ -369,7 +372,7 @@ def obtain_new_grasps(grasp_matrix):
 
 def generate_and_visualize_grasps(semantic_waypoint, depth_images, segmented_cam_imgs, streamers, grasp_estimator, sess, full_save_folder):
     depth_images = np.array(depth_images) / 1000  # Convert list to array first
-    merged_pcd, transformed_pcds, pred_grasps_cam, _, _, pred_gripper_openings = predict_grasps(grasp_estimator, sess, depth_images, np.array(segmented_cam_imgs), np.array([streamers[0].K, streamers[1].K]), np.array([TCR_81, TCR_56]), rgb = realsense_imgs)
+    merged_pcd, transformed_pcds, pred_grasps_cam, each_pred_grasps, each_pred_openings, pred_gripper_openings = predict_grasps(grasp_estimator, sess, depth_images, np.array(segmented_cam_imgs), np.array([streamers[0].K, streamers[1].K]), np.array([TCR_81, TCR_56]), rgb = realsense_imgs)
     print('Predicted grasps:', pred_grasps_cam[True].shape[0])
 
 
@@ -386,14 +389,17 @@ def generate_and_visualize_grasps(semantic_waypoint, depth_images, segmented_cam
     vis.add_geometry(origin)
     vis.run()
     set_camera_view_and_save_image(vis, intrinsic, extrinsic_matrix, os.path.join(full_save_folder, F"pred_grasp_lines_w_gaze.png"), center = semantic_waypoint) 
-
+    grasps, openings = [], []
 
     #distinct_grasps, distinct_openings = find_distinct_grasps(pred_grasps_cam, pred_gripper_openings, semantic_waypoint, n_grasps=3, max_distance=0.2)
     #closest_grasps, closest_opening = find_closest_grasp(pred_grasps_cam, pred_gripper_openings, semantic_waypoint)
-    median_grasp, median_opening = find_median_grasp(pred_grasps_cam, pred_gripper_openings)
-    distinct_grasps = obtain_new_grasps(median_grasp)
-    grasps = distinct_grasps
-    openings = [median_opening for _ in range(len(distinct_grasps))]
+    for i in range(len(each_pred_grasps)):
+        filtered_grasp, filtered_openings = filter_grasps_by_grasp_centre_distance(each_pred_grasps[i], each_pred_openings[i], semantic_waypoint, max_distance=0.1)
+        median_grasp, median_opening = find_median_grasp(filtered_grasp, filtered_openings)
+        new_grasps = obtain_new_grasps(median_grasp)
+        grasps.extend(new_grasps)
+        openings.extend([median_opening for _ in range(len(new_grasps))])
+
     #grasps.append(closest_grasps)
     #openings.append(closest_opening)
     grasps = np.array(grasps)

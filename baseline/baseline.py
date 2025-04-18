@@ -149,7 +149,7 @@ def main():
                     arm.set_gripper_enable(gripper_state)
                 else:
                     arm.vc_set_cartesian_velocity(id_to_control[gazed_id])
-                    time.sleep(0.01)
+                    # time.sleep(0.01)
                     # arm.vc_set_cartesian_velocity([0, 0, 0, 0, 0, 0])
             else:
                 arm.vc_set_cartesian_velocity([0, 0, 0, 0, 0, 0])
@@ -160,3 +160,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# TODO:
+# 1. record the time people look at the markers for control and the time they look at the scene

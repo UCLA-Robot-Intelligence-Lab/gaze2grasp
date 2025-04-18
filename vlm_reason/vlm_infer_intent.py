@@ -144,14 +144,14 @@ def gpt_infer_intent(image, model='gpt-4o'):
         "parameters": {
             "type": "object",
             "properties": {
-                "dummy_property": {
-                    "type": "null",
+                "microwave_handle_point": {
+                    "type": "integer",
+                    "description": "Index of gaze point on the microwave handle to grab",
                 }
             },
-            "required": [],
+            "required": ["microwave_handle_point"],
         },
     }
-
     pick_micro_contact_graspnet_declaration = {
         "type": "function",
         "name": "pick_micro_contact_graspnet",
@@ -159,11 +159,16 @@ def gpt_infer_intent(image, model='gpt-4o'):
         "parameters": {
             "type": "object",
             "properties": {
-                "dummy_property": {
-                    "type": "null",
+                "object_point": {
+                    "type": "integer",
+                    "description": "Index of gaze point on the object to be placed into the microwave",
+                },
+                "microwave_point": {
+                    "type": "integer",
+                    "description": "Index of gaze point on the microwave's location",
                 }
             },
-            "required": [],
+            "required": ["object_point", "microwave_point"],
         },
     }
 
@@ -174,11 +179,16 @@ def gpt_infer_intent(image, model='gpt-4o'):
         "parameters": {
             "type": "object",
             "properties": {
-                "dummy_property": {
-                    "type": "null",
+                "pick_point": {
+                    "type": "integer",
+                    "description": "Index of gaze point on the object to pick",
+                },
+                "pour_point": {
+                    "type": "integer",
+                    "description": "Index of gaze point on the object to be poured into",
                 }
             },
-            "required": [],
+            "required": ["pick_point", "pour_point"],
         },
     }
 
@@ -210,4 +220,4 @@ def gpt_infer_intent(image, model='gpt-4o'):
 
 #def llama_infer_intent(image, model='')
 
-gemini_infer_intent("/home/u-ril/gaze2grasp/vlm_images/coffee3_pink/pcd56/grasp_lines_all_.png")
+gemini_infer_intent("/home/u-ril/gaze2grasp/vlm_images/gaze_inputs/microwave2/cam81_clicks.png")

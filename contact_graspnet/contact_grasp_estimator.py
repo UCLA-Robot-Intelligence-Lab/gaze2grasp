@@ -625,6 +625,7 @@ class GraspEstimator:
             grasps1 = pred_grasps_cam[True]
             grasps2 = pred_grasps_cam1[True]
             grasps3 = pred_grasps_cam2[True]
+            pred_grasps_cam_all = pred_grasps_cam.copy()
 
             rotated_grasps1 = grasps1.copy()
             rotated_grasps1[:, :3, :3] = np.einsum('ij,ajk->aik', rot_inv_matrix, grasps1[:, :3, :3])
@@ -639,7 +640,10 @@ class GraspEstimator:
             rotated_grasps3[:, :3, 3] = np.einsum('ij,aj->ai', rot2_inv_matrix, grasps3[:, :3, 3])
 
             all_rotated_grasps = np.concatenate([rotated_grasps1, rotated_grasps2, rotated_grasps3])
-            pred_grasps_cam[True] = all_rotated_grasps
+            pred_grasps_cam_all[True] = all_rotated_grasps
+            pred_grasps_cam[True] = rotated_grasps1
+            pred_grasps_cam1[True] = rotated_grasps2
+            pred_grasps_cam2[True] = rotated_grasps3
 
             # Un-rotate scores
             all_scores = np.concatenate([scores[True], scores1[True], scores2[True]])
@@ -660,7 +664,8 @@ class GraspEstimator:
             #print("Grasp after rotation:", pred_grasps_cam[True][0])
             #pred_grasps_cam, scores, contact_pts, gripper_openings = self.predict_scene_grasps(sess, np.asarray(pcd_combined.points), merged_segments, local_regions=local_regions, filter_grasps=filter_grasps, forward_passes=forward_passes)
             
-            return pcd_combined, pcds, pred_grasps_cam, all_scores, all_rotated_contact_pts, all_gripper_openings
+            #return pcd_combined, pcds, pred_grasps_cam, all_scores, all_rotated_contact_pts, all_gripper_openings
+            return pcd_combined, pcds, pred_grasps_cam_all, [pred_grasps_cam, pred_grasps_cam1, pred_grasps_cam2], [gripper_openings[True], gripper_openings1[True], gripper_openings2[True]], all_gripper_openings
         else:
             print("INVALID K MATRIX INPUT")
             return None, None, None, None, None, None
